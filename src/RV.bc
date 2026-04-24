@@ -1,0 +1,44 @@
+context RV
+    extends IMA_CTX
+
+constants
+    S_IRUSR
+    S_IWUSR
+    S_IXUSR
+    S_IRGRP
+    S_IWGRP
+    S_IXGRP
+    S_IROTH
+    S_IWOTH
+    S_IXOTH
+    S_ISUID
+    S_ISGID
+    S_ISVTX
+
+axioms
+    // Наследие другого инструмента Pro B (?). Для аниса оно не нужно и мешает
+    // @axm1:         MAX_FILES = 20
+    // @axm2:         finite(STRINGS) ∧ card(STRINGS) = 20
+    // @axm3:         finite(GROUPS) ∧ card(GROUPS) = 10
+    // @axm4:         finite(PROCS) ∧ card(PROCS) = 10
+    // @axm5:         finite(USERS) ∧ card(USERS) = 10
+    // @axm6:         finite(DATA) ∧ card(DATA) = 20
+    // @axm7:         FILE_LIMIT = 20
+    // @axm8:         PROC_FILE_LIMIT = 20
+    // @axm9:         finite(FILE_DESCRIPTORS) ∧ card(FILE_DESCRIPTORS) = 20
+    // @axm10:        finite(CAPABILITIES) ∧ card(CAPABILITIES) ≤ 10 // 
+                                                                  // 
+    @S_IRUSR_type: S_IRUSR = UREAD
+    @S_IWUSR_type: S_IWUSR = UWRITE
+    @S_IXUSR_type: S_IXUSR = UEXECUTE
+    @S_IRGRP_type: S_IRGRP = GREAD
+    @S_IWGRP_type: S_IWGRP = GWRITE
+    @S_IXGRP_type: S_IXGRP = GEXECUTE
+    @S_IROTH_type: S_IROTH = OREAD
+    @S_IWOTH_type: S_IWOTH = OWRITE
+    @S_IXOTH_type: S_IXOTH = OEXECUTE
+    @S_ISUID_type: S_ISUID = SET_UID
+    @S_ISGID_type: S_ISGID = SET_GID
+    @S_ISVTX_type: S_ISVTX = STICKY_BIT
+
+end

@@ -1,0 +1,92 @@
+context DAC_CTX
+
+sets
+    FILES // множество всех возможных файлов
+    PROCS // множество всех возможных процессов
+    USERS // множество всех возможных учетных записей пользователей
+    GROUPS // множество всех возможных групп пользователей
+    FILE_DESCRIPTORS_EXTENDED // множество всех файловых дескрипторов, расширенное специальным дескриптором AT_FDCWD
+    PERMISSIONS // права доступа включают в себя rwx права для владельца файла (USER_PERMISSIONS), группы (GROUP_PERMISSIONS), и остальных (OTHER_PERMISSIOS), а также дополнительные флаги SET_UID, SET_GID, STICKY_BIT
+    STRINGS // множество всех возможных строк
+    DATA // некоторые абстрактные данные, структура которых нам не важна
+    CAPABILITIES // привилегии учетной записи
+
+constants
+    INIT // процесс инициализации системы
+    INIT_EXE // исполняемый файл процесса инициализации
+    INIT_NAME // имя исполняемого файла процесса инициализации
+    ROOT // корневая директория файловой системы
+    MAX_FILES // quota of inodes on the filesystem
+    PROC_FILE_LIMIT // This specifies a value one greater than the maximum file descriptor number that can be opened by this process
+    FILE_LIMIT // System-wide limit on the total number of open files
+    USER_PERMISSIONS // rwx права владельца файла
+    GROUP_PERMISSIONS // rwx права группы файла
+    OTHER_PERMISSIONS // rwx права остальных
+    FILE_MODES // флаги SET_UID, SET_GID, STICKY_BIT
+    UREAD // право доступа на чтение для владельца файла
+    UWRITE // право доступа на запись для владельца файла
+    UEXECUTE // право доступа на выполнение для владельца файла
+    GREAD // право доступа на чтение для группы
+    GWRITE // право доступа на запись для группы
+    GEXECUTE // право доступа на выполнение для группы
+    OREAD // право доступа на чтение для остальных
+    OWRITE // право доступа на запись для остальных
+    OEXECUTE // право доступа на выполнение для остальных
+    SET_UID // флаг прав доступа на смену ID пользователя во время выполнения
+    SET_GID // флаг прав доступа на смену ID группы во время выполнения
+    STICKY_BIT // флаг, установка которого на каталог защищает файлы от удаления другими пользователями
+    DEF_FILE_PERMS // права доступа по умолчанию для файлов
+    DEF_FOLDER_PERMS // права доступа по умолчанию для каталогов
+    DEF_SYMLINK_PERMS // права доступа по умолчанию для симлинков
+    ROOT_USER // учетная запись суперпользователя
+    ROOT_GROUP // группа суперпользователя
+    FILE_DESCRIPTORS // множество всех файловых дескрипторов
+    AT_FDCWD // файловый дескриптор, указывающий на текущую рабочую директорию
+
+axioms
+    @INIT_type:
+        INIT ∈ PROCS
+    @INIT_EXE_type:
+        INIT_EXE ∈ FILES
+    @INIT_NAME_type:
+        INIT_NAME ∈ STRINGS
+    @ROOT_type:
+        ROOT ∈ FILES
+    @ROOT1:
+        ROOT ≠ INIT_EXE
+    @MAX_FILES_type:
+        MAX_FILES ∈ ℕ1
+    @FILES_finite1:
+        finite(FILES)
+    @FILES_finite2:
+        card(FILES) ≤ MAX_FILES
+    @PROC_FILE_LIMIT_type:
+        PROC_FILE_LIMIT ∈ ℕ1
+    @FILE_DESCRIPTORS_EXTENDED_finite:
+        finite(FILE_DESCRIPTORS_EXTENDED)
+    @FILE_LIMIT_type:
+        FILE_LIMIT ∈ ℕ1
+    @PERMISSIONS_partition:
+        partition(PERMISSIONS, USER_PERMISSIONS, GROUP_PERMISSIONS, OTHER_PERMISSIONS, FILE_MODES)
+    @USER_PERMISSIONS_partition:
+        partition(USER_PERMISSIONS, {UREAD}, {UWRITE}, {UEXECUTE})
+    @GROUP_PERMISSIONS_partition:
+        partition(GROUP_PERMISSIONS, {GREAD}, {GWRITE}, {GEXECUTE})
+    @OTHER_PERMISSIONS_partition:
+        partition(OTHER_PERMISSIONS, {OREAD}, {OWRITE}, {OEXECUTE})
+    @FILE_MODES_partition:
+        partition(FILE_MODES, {SET_UID}, {SET_GID}, {STICKY_BIT})
+    @DEF_FILE_PERMS_type:
+        DEF_FILE_PERMS = {UREAD, UWRITE, GREAD, OREAD}
+    @DEF_FOLDER_PERMS_type:
+        DEF_FOLDER_PERMS = {UREAD, UWRITE, UEXECUTE, GREAD, GEXECUTE, OREAD, OEXECUTE}
+    @DEF_SYMLINK_PERMS_type:
+        DEF_SYMLINK_PERMS = {UREAD, UWRITE, UEXECUTE, GREAD, GWRITE, GEXECUTE, OREAD, OWRITE, OEXECUTE}
+    @ROOT_USER_type:
+        ROOT_USER ∈ USERS
+    @ROOT_GROUP_type:
+        ROOT_GROUP ∈ GROUPS
+    @FILE_DESCRIPTORS_type:
+        partition(FILE_DESCRIPTORS_EXTENDED, FILE_DESCRIPTORS, {AT_FDCWD}) // AT_FDCWD - Special value used to indicate openat should use the current working directory
+
+end

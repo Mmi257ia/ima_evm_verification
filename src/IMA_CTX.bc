@@ -1,0 +1,35 @@
+context IMA_CTX
+    extends DAC_CTX
+
+sets
+    INTEGRITY_MODES
+    HASHES
+
+constants
+    ENFORCE
+    FIX
+    OFF
+    IMA_STRING // security.ima
+    EVM_STRING // security.evm
+    ROOT_CONTENT_HASH
+    ROOT_META_HASH
+    INIT_EXE_CONTENT_HASH
+    INIT_EXE_META_HASH
+
+axioms
+    @INTEGRITY_MODES_partition:
+        partition(INTEGRITY_MODES, {ENFORCE}, {FIX}, {OFF})
+    @IMA_STRING_type:
+        IMA_STRING ∈ STRINGS
+    @EVM_STRING_type:
+        EVM_STRING ∈ STRINGS
+    @ROOT_CONTENT_HASH_type:
+        ROOT_CONTENT_HASH ∈ HASHES
+    @ROOT_META_HASH_type:
+        ROOT_META_HASH ∈ HASHES
+    @INIT_EXE_CONTENT_HASH_type:
+        INIT_EXE_CONTENT_HASH ∈ HASHES
+    @INIT_EXE_META_HASH_type:
+        INIT_EXE_META_HASH ∈ HASHES
+
+end

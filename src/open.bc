@@ -1,0 +1,79 @@
+context open
+
+constants
+    OPEN_FLAGS
+    O_RDONLY
+    O_WRONLY
+    O_RDWR
+    O_CREAT
+    O_EXCL
+    O_DIRECT
+    O_TMPFILE
+    O_DIRECTORY
+    O_CLOEXEC
+    O_NOCTTY
+    O_NOFOLLOW
+    O_TRUNC
+    O_APPEND
+    O_ASYNC
+    O_SYNC
+    O_DSYNC
+    O_NOATIME
+    O_LARGEFILE
+    O_PATH
+    O_NOBLOCK
+    O_NDELAY
+
+axioms
+    @O_RDONLY_type:
+        O_RDONLY = 1
+    @O_WRONLY_type:
+        O_WRONLY = 2
+    @O_RDWR_type:
+        O_RDWR = 3
+    @O_CREAT_type:
+        O_CREAT = 4
+    @O_EXCL_type:
+        O_EXCL = 5
+    @O_DIRECT_type:
+        O_DIRECT = 6
+    @O_TMPFILE_type:
+        O_TMPFILE = 7
+    @O_DIRECTORY_type:
+        O_DIRECTORY = 8
+    @O_CLOEXEC_type:
+        O_CLOEXEC = 9
+    @O_NOCTTY_type:
+        O_NOCTTY = 10
+    @O_NOFOLLOW_type:
+        O_NOFOLLOW = 11
+    @O_TRUNC_type:
+        O_TRUNC = 12
+    @O_APPEND_type:
+        O_APPEND = 13
+    @O_ASYNC_type:
+        O_ASYNC = 14
+    @O_SYNC_type:
+        O_SYNC = 15
+    @O_DSYNC_type:
+        O_DSYNC = 16
+    @O_NOATIME_type:
+        O_NOATIME = 17
+    @O_LARGEFILE_type:
+        O_LARGEFILE = 18
+    @O_PATH_type:
+        O_PATH = 19
+    @O_NOBLOCK_type:
+        O_NOBLOCK = 20
+    @O_NDELAY_type:
+        O_NDELAY = 21
+    @OPEN_FLAGS_type:
+        OPEN_FLAGS = {
+            O_RDONLY, O_WRONLY, O_RDWR,
+            O_CLOEXEC, O_CREAT, O_DIRECTORY, O_EXCL, O_NOCTTY,
+            O_NOFOLLOW, O_TMPFILE, O_TRUNC,
+            O_APPEND, O_ASYNC, O_DIRECT, O_DSYNC, O_LARGEFILE,
+            O_NOATIME, O_NOBLOCK, O_NDELAY, O_PATH, O_SYNC
+        }
+
+end

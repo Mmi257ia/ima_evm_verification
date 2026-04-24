@@ -1,0 +1,378 @@
+machine IMA
+    refines DAC
+    sees IMA_CTX open xattrs
+
+variables
+    Users
+    Groups
+    Procs
+    Files
+    Folders
+    SymLinks
+    FDs
+    FileParents
+    FileLink
+    ProcFDs
+    FDFlags
+    FDFile
+    FDNumber
+    DACPermissions
+    UserACL
+    GroupACL
+    GroupObjACL
+    MaskACL
+    FileUser
+    FileGroup
+    ProcUser
+    ProcGroup
+    ProcUmask
+    FileXattrs
+    ProcEXE
+    ProcArgv
+    ProcEnvp
+    ProcCwd
+    ProcParent
+    UserGroups
+    PathToRoot
+    UserCaps
+    ContentHash
+    MetaHash
+    ImmutableFiles // атрибут immutablе
+    IMAHash
+    EVMHash
+    IMAMode
+    EVMMode
+
+invariants
+    @ContentHash_type:
+        ContentHash ∈ Files → HASHES
+    @MetaHash_type:
+        MetaHash ∈ Files → HASHES
+    @ImmutableFiles_type:
+        ImmutableFiles ⊆ Files
+    @IMAHash_type:
+        IMAHash ∈ Files ⇸ HASHES
+    @EVMHash_type:
+        EVMHash ∈ Files ⇸ HASHES
+    @IMAMode_type:
+        IMAMode ∈ INTEGRITY_MODES
+    @EVMMode_type:
+        EVMMode ∈ INTEGRITY_MODES
+
+
+events
+    event INITIALISATION extends INITIALISATION
+      then
+        @act41: ContentHash ≔ {ROOT ↦ ROOT_CONTENT_HASH, INIT_EXE ↦ INIT_EXE_CONTENT_HASH}
+        @act42: MetaHash ≔ {ROOT ↦ ROOT_META_HASH, INIT_EXE ↦ INIT_EXE_META_HASH}
+        @act43: ImmutableFiles ≔ ∅
+        @act44: IMAHash ≔ ∅
+        @act45: EVMHash ≔ ∅
+        @act46: IMAMode ≔ OFF
+        @act47: EVMMode ≔ OFF
+    end
+
+    event open_create extends open_create
+      any
+        contentHash // -
+        metaHash // -
+      where
+        @grd28: contentHash ∈ HASHES
+        @grd29: metaHash ∈ HASHES
+        @grd30: parent ∉ ImmutableFiles
+      then
+        @act15: ContentHash(file) ≔ contentHash
+        @act16: MetaHash(file) ≔ metaHash
+    end
+
+    event open_exists extends open_exists
+      where
+        @grd27: IMAMode = ENFORCE ∧ EVMMode = ENFORCE ⇒ file ∈ dom(EVMHash) ∧ EVMHash(file) = MetaHash(file) // EVM metadata check is only made when IMA appraisal is performed
+        @grd28: IMAMode = ENFORCE ⇒ file ∈ dom(IMAHash) ∧ IMAHash(file) = ContentHash(file)
+        @grd29: file ∈ ImmutableFiles ⇒ O_WRONLY ∉ flags ∧ O_RDWR ∉ flags
+        @grd30: IMAMode = ENFORCE ⇒ O_WRONLY ∉ flags ∧ O_RDWR ∉ flags
+        @grd31: parent ∉ ImmutableFiles
+    end
+
+    event openat_create extends openat_create
+      any
+        contentHash // -
+        metaHash // -
+      where
+        @grd34: contentHash ∈ HASHES
+        @grd35: metaHash ∈ HASHES
+        @grd36: parent ∉ ImmutableFiles
+      then
+        @act15: ContentHash(file) ≔ contentHash
+        @act16: MetaHash(file) ≔ metaHash
+    end
+
+    event openat_exists extends openat_exists
+      where
+        @grd32: IMAMode = ENFORCE ∧ EVMMode = ENFORCE ⇒ file ∈ dom(EVMHash) ∧ EVMHash(file) = MetaHash(file)
+        @grd33: IMAMode = ENFORCE ⇒ file ∈ dom(IMAHash) ∧ IMAHash(file) = ContentHash(file)
+        @grd34: file ∈ ImmutableFiles ⇒ O_WRONLY ∉ flags ∧ O_RDWR ∉ flags
+        @grd35: IMAMode = ENFORCE ⇒ O_WRONLY ∉ flags ∧ O_RDWR ∉ flags
+        @grd36: parent ∉ ImmutableFiles
+    end
+
+    event mkdir extends mkdir // TODO: add support for mkdirat?
+      any
+        contentHash // -
+        metaHash // -
+      where
+        @grd18: contentHash ∈ HASHES
+        @grd19: metaHash ∈ HASHES
+        @grd20: parent ∉ ImmutableFiles
+      then
+        @act12: ContentHash(folder) ≔ contentHash
+        @act13: MetaHash(folder) ≔ metaHash
+    end
+
+    event chmod extends chmod
+      any
+        metaHash // -
+      where
+        @grd8: metaHash ∈ HASHES
+        @grd9: file ∉ ImmutableFiles
+        @grd10: DACPermissions(file) = perms ⇔ MetaHash(file) = metaHash
+      then
+        @act4: MetaHash(file) ≔ metaHash
+    end
+
+    event fchmod extends fchmod
+      any
+        metaHash // -
+      where
+        @grd8: metaHash ∈ HASHES
+        @grd9: DACPermissions(FDFile(fd)) = perms ⇔ MetaHash(FDFile(fd)) = metaHash
+      then
+        @act4: MetaHash(FDFile(fd)) ≔ metaHash
+    end
+
+    event fchmodat extends fchmodat
+      any
+        metaHash // -
+      where
+        @grd12: metaHash ∈ HASHES
+        @grd13: file ∉ ImmutableFiles
+        @grd14: DACPermissions(file) = perms ⇔ MetaHash(file) = metaHash
+      then
+        @act4: MetaHash(file) ≔ metaHash
+    end
+
+    event chown extends chown
+      any
+        metaHash // -
+      where
+        @grd12: metaHash ∈ HASHES
+        @grd13: file ∉ ImmutableFiles
+        @grd14: (FileUser(file) = owner ∧ FileGroup(file) = group) ⇔ MetaHash(file) = metaHash
+      then
+        @act4: MetaHash(file) ≔ metaHash
+    end
+
+    event fchown extends fchown
+      any
+        metaHash // -
+      where
+        @grd12: metaHash ∈ HASHES
+        @grd13: (FileUser(FDFile(fd)) = owner ∧ FileGroup(FDFile(fd)) = group) ⇔ MetaHash(FDFile(fd)) = metaHash
+      then
+        @act4: MetaHash(FDFile(fd)) ≔ metaHash
+    end
+
+    event fchownat extends fchownat
+      any
+        metaHash // -
+      where
+        @grd16: metaHash ∈ HASHES
+        @grd17: file ∉ ImmutableFiles
+        @grd18: (FileUser(file) = owner ∧ FileGroup(file) = group) ⇔ MetaHash(file) = metaHash
+      then
+        @act4: MetaHash(file) ≔ metaHash
+    end
+
+    event chdir extends chdir
+    end
+
+    event fchdir extends fchdir
+    end
+
+    event getdents extends getdents
+    end
+
+    event getxattr extends getxattr
+    end
+
+    event setxattr extends setxattr
+      where
+        @grd15: name ∉ {IMA_STRING, EVM_STRING}
+        @grd16: file ∉ ImmutableFiles
+    end
+
+    event link extends link
+    end
+
+    event symlink extends symlink // TODO: add basic symlink support to other syscalls
+      any
+        contentHash // -
+        metaHash // -
+      where
+        @grd14: contentHash ∈ HASHES
+        @grd15: metaHash ∈ HASHES
+        @grd16: parent ∉ ImmutableFiles
+      then
+        @act12: ContentHash(file) ≔ contentHash
+        @act13: MetaHash(file) ≔ metaHash
+    end
+
+    event execve extends execve // TODO: support #!interpreter
+      where
+        @grd16: IMAMode = ENFORCE ∧ EVMMode = ENFORCE ⇒ exeFile ∈ dom(EVMHash) ∧ EVMHash(exeFile) = MetaHash(exeFile)
+        @grd17: IMAMode = ENFORCE ⇒ exeFile ∈ dom(IMAHash) ∧ IMAHash(exeFile) = ContentHash(exeFile)
+    end
+
+    event umask extends umask
+    end
+
+    event exit extends exit
+    end
+
+    event close extends close
+      any
+        imaHash // -
+        evmHash // -
+        contentHash
+        metaHash
+      where
+        @grd6: imaHash ∈ HASHES
+        @grd7: evmHash ∈ HASHES
+        @grd8: contentHash ∈ HASHES
+        @grd9: metaHash ∈ HASHES
+        @grd10: IMAMode = FIX ⇒ imaHash = contentHash
+        @grd11: IMAMode ≠ FIX ∧ FDFile(fd) ∈ dom(IMAHash) ⇒ imaHash = IMAHash(FDFile(fd))
+        @grd12: EVMMode = FIX ⇒ evmHash = metaHash
+        @grd13: EVMMode ≠ FIX ∧ FDFile(fd) ∈ dom(EVMHash) ⇒ evmHash = EVMHash(FDFile(fd))
+        @grd14: FDFile(fd) ∈ Files
+                   ⇒ (MetaHash(FDFile(fd)) = metaHash ⇔ (ContentHash(FDFile(fd)) = contentHash ∨ IMAMode ≠ FIX))
+        @grd15: O_RDONLY ∈ FDFlags(fd) ∧ FDFile(fd) ∈ Files
+                   ⇒ (ContentHash(FDFile(fd)) = contentHash ∧ MetaHash(FDFile(fd)) = metaHash)
+      then
+        @act6: EVMHash :∣ (EVMMode = FIX ∧ FDFile(fd) ∈ Files ∧ EVMHash' = (({FDFile(fd)} ⩤ EVMHash) ∪ {FDFile(fd) ↦ evmHash}))
+                           ∨ (¬(EVMMode = FIX ∧ FDFile(fd) ∈ Files) ∧ EVMHash' = EVMHash)
+        @act7: IMAHash :∣ (IMAMode = FIX ∧ FDFile(fd) ∈ Files ∧ IMAHash' = (({FDFile(fd)} ⩤ IMAHash) ∪ {FDFile(fd) ↦ imaHash}))
+                          ∨ (¬(IMAMode = FIX ∧ FDFile(fd) ∈ Files) ∧ IMAHash' = IMAHash)
+        @act8: ContentHash :∣ (FDFile(fd) ∈ Files ∧ ContentHash' = (({FDFile(fd)} ⩤ ContentHash) ∪ {FDFile(fd) ↦ contentHash}))
+                          ∨ (FDFile(fd) ∉ Files ∧ ContentHash' = ContentHash)
+        @act9: MetaHash :∣ (FDFile(fd) ∈ Files ∧ MetaHash' = (({FDFile(fd)} ⩤ MetaHash) ∪ {FDFile(fd) ↦ metaHash}))
+                          ∨ (FDFile(fd) ∉ Files ∧ MetaHash' = MetaHash)
+    end
+
+    event unlink extends unlink
+      where
+        @grd11: file ∉ ImmutableFiles
+        @grd12: parent ∉ ImmutableFiles
+      then
+        @act13: ContentHash ≔ files ⩤ ContentHash
+        @act14: MetaHash ≔ files ⩤ MetaHash
+        @act15: ImmutableFiles ≔ ImmutableFiles ∖ files
+        @act16: IMAHash ≔ files ⩤ IMAHash
+        @act17: EVMHash ≔ files ⩤ EVMHash
+    end
+
+    event rmdir extends rmdir
+      where
+        @grd9: folder ∉ ImmutableFiles
+        @grd10: parent ∉ ImmutableFiles
+      then
+        @act13: ContentHash ≔ {folder} ⩤ ContentHash
+        @act14: MetaHash ≔ {folder} ⩤ MetaHash
+        @act15: ImmutableFiles ≔ ImmutableFiles ∖ {folder}
+        @act16: IMAHash ≔ {folder} ⩤ IMAHash
+        @act17: EVMHash ≔ {folder} ⩤ EVMHash
+    end
+
+    event fork extends fork
+    end
+
+    event create_user extends create_user
+    end
+
+    event create_group extends create_group
+    end
+
+    event login extends login
+    end
+
+    event any_transition extends any_transition
+      any
+        fContentHash
+        fMetaHash
+        fImmutableFiles
+        fIMAHash
+        fEVMHash
+        fIMAMode
+        fEVMMode
+      where
+        @grd52: fContentHash ∈ fFiles → HASHES
+        @grd53: fMetaHash ∈ fFiles → HASHES
+        @grd54: fImmutableFiles ⊆ fFiles
+        @grd55: fIMAHash ∈ fFiles ⇸ HASHES
+        @grd56: fEVMHash ∈ fFiles ⇸ HASHES
+        @grd57: fIMAMode ∈ INTEGRITY_MODES
+        @grd58: fEVMMode ∈ INTEGRITY_MODES
+      then
+        @act33: ContentHash ≔ fContentHash
+        @act34: MetaHash ≔ fMetaHash
+        @act35: ImmutableFiles ≔ fImmutableFiles
+        @act36: IMAHash ≔ fIMAHash
+        @act37: EVMHash ≔ fEVMHash
+        @act38: IMAMode ≔ fIMAMode
+        @act39: EVMMode ≔ fEVMMode
+    end
+
+    event switch_ima_mode
+      any
+        mode
+      where
+        @grd1: mode ∈ INTEGRITY_MODES
+      then
+        @act1: IMAMode ≔ mode
+    end
+
+    event switch_evm_mode
+      any
+        mode
+      where
+        @grd1: mode ∈ INTEGRITY_MODES
+      then
+        @act1: EVMMode ≔ mode
+    end
+
+    event mark_immutable
+      any
+        file
+      where
+        @grd1: file ∈ Files ∖ ImmutableFiles
+      then
+        @act1: ImmutableFiles ≔ ImmutableFiles ∪ {file}
+    end
+
+    event unmark_immutable
+      any
+        file
+      where
+        @grd1: file ∈ ImmutableFiles
+        @grd2: IMAMode ≠ ENFORCE ∧ EVMMode ≠ ENFORCE
+      then
+        @act1: ImmutableFiles ≔ ImmutableFiles ∖ {file}
+    end
+
+    event set_acl extends set_acl
+    end
+
+    event change_capabilities extends change_capabilities
+    end
+
+end

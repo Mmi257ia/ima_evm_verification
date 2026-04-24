@@ -1,0 +1,1963 @@
+machine DAC
+    sees DAC_CTX open xattrs
+
+variables
+    Users
+    Groups
+    Procs
+    Files
+    Folders
+    SymLinks
+    FDs
+    FileParents
+    FileLink
+    ProcFDs
+    FDFlags
+    FDFile
+    FDNumber
+    DACPermissions // ACL_USER_OBJ и ACL_OTHER явно в модели не описываются, так как им соответствуют обычные file permission bits (DACPermissions)
+    UserACL // ACL_USER - denote access rights for users identified by the entry's qualifier
+    GroupObjACL // ACL_GROUP_OBJ - denotes access rights for the file group
+    GroupACL // ACL_GROUP - denote access rights for groups identified by the entry's qualifier
+    MaskACL // ACL_MASK - denotes the maximum access rights that can be granted by entries of type ACL_USER, ACL_GROUP_OBJ, or ACL_GROUP
+    FileUser
+    FileGroup
+    ProcUser
+    ProcGroup
+    ProcUmask
+    FileXattrs
+    ProcEXE
+    ProcArgv
+    ProcEnvp
+    ProcCwd
+    ProcParent
+    UserGroups
+    PathToRoot
+    UserCaps
+
+invariants
+    @Users_type:          Users ⊆ USERS // множество учетных записей пользователей
+    @Groups_type:         Groups ⊆ GROUPS // множество групп
+    @Procs_type:          Procs ⊆ PROCS // множество процессов
+    @Files_type:          Files ⊆ FILES // множество файлов
+    @Folders_type:        Folders ⊆ Files // множество директорий
+    @SymLinks_type:       SymLinks ⊆ Files
+    @FDs_type:            FDs ⊆ FILE_DESCRIPTORS // множество открытых файловых дескрипторов
+                                                 // 
+    @INIT_type:           INIT ∈ Procs // процесс инициализации принадлежит текущему множеству процессов
+    @ROOT_type:           ROOT ∈ Folders // корневая директория принадлежит текущему множеству директорий
+    @ROOT_USER_type:      ROOT_USER ∈ Users // суперпользователь принадлежит текущему множеству учетных записей
+                                            // 
+    @FileParents_type:    FileParents ∈ (Files ∖ {ROOT})  (Folders × STRINGS) // иерархия файловой системы
+    @FileLink_type:       FileLink ∈ SymLinks → FILES × STRINGS
+    @ProcFDs_type:        ProcFDs ∈ Procs ↔ FDs // отображение процессов на открытые ими файловые дескрипторы
+    @FDFlags_type:        FDFlags ∈ FDs → ℙ(OPEN_FLAGS) // отображение открытых файловых дескрипторов на флаги, с которыми они были открыты
+    @FDFile_type:         FDFile ∈ FDs → FILES // отображение открытых файловых дескрипторов на файлы, к которым они привязаны
+    @FDNumber_type:       FDNumber ∈ FDs → ℕ // номера открытых файловых дескрипторов
+    @DACPermissions_type: DACPermissions ∈ Files → ℙ(PERMISSIONS) // права доступа файлов
+    @UserACL_type:        UserACL ∈ (Files × Users) ⇸ ℙ(USER_PERMISSIONS) // запись ACL о правах доступа учетных записей
+    @GroupObjACL:         GroupObjACL ∈ Files ⇸ ℙ(GROUP_PERMISSIONS) // запись ACL о правах доступа групп-владельцев
+    @GroupACL_type:       GroupACL ∈ (Files × Groups) ⇸ ℙ(GROUP_PERMISSIONS) // запись ACL о правах доступа групп
+    @MaskACL_type:        MaskACL ∈ Files ⇸ ℙ(GROUP_PERMISSIONS) // максимальные права доступа, выше которых в UserACL, GroupACL и GroupObjACL быть не может.
+                                                                 // Маска может существовать и при этом быть пустой
+    @FileUser_type:       FileUser ∈ Files → Users // отображение файлов в их владельцев
+    @FileGroup_type:      FileGroup ∈ Files → Groups // отображение файлов в их группы
+    @ProcUser_type:       ProcUser ∈ Procs → Users // effective UID процесса
+    @ProcGroup_type:      ProcGroup ∈ Procs → Groups // effective GID процесса
+    @ProcUmask_type:      ProcUmask ∈ Procs → ℙ(PERMISSIONS ∖ FILE_MODES) // маска режима создания файлов процесса
+    @FileXattrs_type:     FileXattrs ∈ Files → (STRINGS ⇸ DATA) // расширенные атрибуты файла
+    @ProcEXE_type:        ProcEXE ∈ Procs → FILES // исполняемый файл процесса
+    @ProcArgv_type:       ProcArgv ∈ Procs → ℙ(STRINGS) // команды запуска процесса
+    @ProcEnvp_type:       ProcEnvp ∈ Procs → ℙ(STRINGS) // окружение процесса
+    @ProcCwd_type:        ProcCwd ∈ Procs → FILES // текущая рабочая директория процесса
+    @ProcParent_type:     ProcParent ∈ Procs ∖ {INIT} → Procs // иерархия процессов
+    @UserGroups:          UserGroups ∈ Users ↔ Groups // отображение учетных записей на группы
+    @PathToRoot_type:     PathToRoot ∈ Folders → ℙ(Folders) // для каждой директории F PathToRoot(F) равно множеству директорий выше ее по иерархии, включая корневую директорию
+    @UserCaps_type:       UserCaps ∈ Users → ℙ(CAPABILITIES) // привилегии учетной записи
+                                                             // 
+    @PathToRoot1:         PathToRoot(ROOT) = ∅ // инварианты, описывающие свойства функции PathToRoot
+    @PathToRoot2:         ∀f, p · f ∈ Folders ∧ p ∈ dom(FileParents[{f}]) ⇒ PathToRoot(f) = PathToRoot(p) ∪ {p}
+    @PathToRoot3:         ∀f, p · f ∈ Folders ∧ p ∈ PathToRoot(f) ⇒ PathToRoot(p) ⊆ PathToRoot(f)
+    // @PathToRoot4:         ∀f, p · f ∈ Folders ∧ p ∈ PathToRoot(f) ⇒ (∃c · p ∈ dom(FileParents[{c}]) ∧ (c ∈ PathToRoot(f) ∨ c = f)) //
+    @PathToRoot4:         ∀f, p · f ∈ Folders ∧ p ∈ PathToRoot(f) ⇒ (∃c · (c ∈ PathToRoot(f) ∪ {f}) ∧ p ∈ dom(FileParents[{c}])) //
+                                                                                                                                   //
+    @Files1:              card(Files) ≤ MAX_FILES // множество файлов ограничено
+                                                  // 
+    @SymLinks1:           SymLinks ∩ Folders = ∅
+    @ProcEXE1:            ∀p · p ∈ Procs ⇒ ProcEXE(p) ∉ Folders // исполняемый файл процесса не может быть директорией
+                                                                // 
+    @ProcFDs1:            ∀p · p ∈ Procs ⇒ card(ProcFDs[{p}]) ≤ PROC_FILE_LIMIT // число открытых файловых дескрипторов ограничено
+    @ProcFDs2:            card(ran(ProcFDs)) ≤ FILE_LIMIT // число открытых файловых дескрипторов ограничено
+    @ProcFDs3:            ∀p, fd · p ∈ Procs ∧ p ↦ fd ∈ ProcFDs ∧ FDFile(fd) ∈ Folders ∧ O_PATH ∉ FDFlags(fd)
+	⇒ O_WRONLY ∉ FDFlags(fd) ∧ O_RDWR ∉ FDFlags(fd) // нельзя иметь открытый дескриптор директории на запись (можно, если также выставлен флаг O_PATH)
+                                                    // 
+    // @FileParents1:        ∀f · f ∈ Folders ∖ {ROOT} ⇒ (∃p, n · FileParents[{f}] = {p ↦ n}) // у директории в иерархии файлов может быть только 1 родитель
+    @FileParents1:        ∀f · f ∈ Folders ∖ {ROOT} ⇒ (card(FileParents[{f}]) = 1) // у директории в иерархии файлов может быть только 1 родитель
+                                                                                           // 
+    @ACL1:                ∀f, u · f ↦ u ∈ dom(UserACL) ⇒ f ∈ dom(MaskACL) // если в UserACL есть запись для файла, то у этого файла должна быть маска в MaskACL
+    @ACL2:                ∀f, g · f ↦ g ∈ dom(GroupACL) ⇒ f ∈ dom(MaskACL) // если в GroupACL есть запись для файла, то у этого файла должна быть маска в MaskACL
+                                                                           // 
+    @ACL3:                ∀f · f ∈ dom(MaskACL) ⇒ MaskACL(f) = DACPermissions(f) ∩ GROUP_PERMISSIONS // If the ACL has an ACL_MASK entry,
+                                                                                                     // the group permissions correspond to the permissions of the ACL_MASK entry
+    @ACL4:                ∀f · f ∈ Files ∧ f ∉ dom(MaskACL) ⇒ f ∈ dom(GroupObjACL) ∧ GroupObjACL(f) = DACPermissions(f) ∩ GROUP_PERMISSIONS // if the ACL has no ACL_MASK entry, the group permissions correspond to the permissions of the ACL_GROUP_OBJ entry.
+                                                                                                                                            // 
+    @ProcCwd1:            ∀p · p ∈ Procs ∧ ProcCwd(p) ∈ Files ⇒ ProcCwd(p) ∈ Folders // текущая рабочая директория процесса либо удалена, либо является директорией (а не файлом)
+    @FDNumber:            ∀p · p ∈ Procs ⇒ (∀fd1, fd2 · fd1 ∈ ProcFDs[{p}] ∧ fd2 ∈ ProcFDs[{p}] ⇒ (fd1 ≠ fd2 ⇒ FDNumber(fd1) ≠ FDNumber(fd2))) // в этой модели номер файлового дескриптора не зависит от процесса, т.к. дублирование воможно только в fork, который сохраняет номер
+
+events
+
+    event INITIALISATION
+    then
+        @act1:  Users ≔ {ROOT_USER}
+        @act2:  Groups ≔ {ROOT_GROUP}
+        @act3:  Procs ≔ {INIT}
+        @act4:  Files ≔ {ROOT, INIT_EXE}
+        @act5:  Folders ≔ {ROOT}
+        @act6:  SymLinks ≔ ∅
+        @act7:  FDs ≔ ∅
+        @act8:  FileParents ≔ {INIT_EXE ↦ (ROOT ↦ INIT_NAME)}
+        @act9:  FileLink ≔ ∅
+        @act10: ProcFDs ≔ ∅
+        @act11: FDFlags ≔ ∅
+        @act12: FDFile ≔ ∅
+        @act13: FDNumber ≔ ∅
+        @act14: DACPermissions ≔ {ROOT ↦ DEF_FOLDER_PERMS, INIT_EXE ↦ DEF_FILE_PERMS}
+        @act15: UserACL ≔ ∅
+        @act16: GroupACL ≔ ∅
+        @act17: GroupObjACL ≔ {ROOT ↦ DEF_FOLDER_PERMS ∩ GROUP_PERMISSIONS, INIT_EXE ↦ DEF_FILE_PERMS ∩ GROUP_PERMISSIONS}
+        @act18: MaskACL ≔ ∅
+        @act19: FileUser ≔ {ROOT ↦ ROOT_USER, INIT_EXE ↦ ROOT_USER}
+        @act20: FileGroup ≔ {ROOT ↦ ROOT_GROUP, INIT_EXE ↦ ROOT_GROUP}
+        @act21: ProcUser ≔ {INIT ↦ ROOT_USER}
+        @act22: ProcGroup ≔ {INIT ↦ ROOT_GROUP}
+        @act23: ProcUmask ≔ {INIT ↦ ∅}
+        @act24: FileXattrs ≔ {ROOT ↦ ∅, INIT_EXE ↦ ∅}
+        @act25: ProcEXE ≔ {INIT ↦ INIT_EXE}
+        @act26: ProcArgv ≔ {INIT ↦ ∅}
+        @act27: ProcEnvp ≔ {INIT ↦ ∅}
+        @act28: ProcCwd ≔ {INIT ↦ ROOT}
+        @act29: ProcParent ≔ ∅
+        @act30: UserGroups ≔ {ROOT_USER ↦ ROOT_GROUP}
+        @act31: PathToRoot ≔ {ROOT ↦ ∅}
+        @act32: UserCaps ≔ {ROOT_USER ↦ ∅}
+    end
+
+    event open_create
+    any
+        proc // процесс, вызывающий open
+        parent // родительская директория создаваемого файла
+        file // - создаваемый файл (параметр не указывается явно в ProB)
+        name // имя создаваемого файла
+        flags // флаги, с которыми будет создан файл
+        mode // права доступа, переданные в качестве параметра open
+        fd // - файловый дескриптор, который вернет open (параметр не указывается явно в ProB)
+        fdNumber // - номер файлового дескриптора (параметр не указывается явно в ProB)
+        group // - группа файла (параметр не указывается явно в ProB)
+        perms // - итоговые права доступа, с которыми будет создан файл (параметр не указывается явно в ProB)
+    where
+        @grd1:  proc ∈ Procs // @const
+        @grd2:  parent ∈ Folders
+        @grd3:  file ∈ ((FILES ∖ Files) ∖ ran(FDFile)) ∖ ran(ProcCwd) // @const файл не присутсвует в системе ни в каком виде
+        @grd4:  ∀f · f ∈ dom(FileParents) ⇒ f ↦ (parent ↦ name) ∉ FileParents // @const с таким именем в переданной директории нет ни одного файла
+        @grd5:  flags ⊆ OPEN_FLAGS // @const
+        @grd6:  mode ⊆ PERMISSIONS // @const
+        @grd7:  fd ∈ FILE_DESCRIPTORS ∖ FDs // @const
+        @grd8:  fdNumber ∈ ℕ // @const
+        @grd9:  ∀pfd · proc ↦ pfd ∈ ProcFDs ⇒ FDNumber(pfd) ≠ fdNumber // @const номер нового дескриптора уникален для процесса
+        @grd10: O_CREAT ∈ flags ∨ O_TMPFILE ∈ flags // один из этих флагов должен быть выставлен, чтобы выполнение пошло по пути open_create
+        @grd11: O_RDONLY ∈ flags ∨ O_WRONLY ∈ flags ∨ O_RDWR ∈ flags // данные флаги взаимоисключаемы
+        @grd12: ¬(O_RDONLY ∈ flags ∧ O_WRONLY ∈ flags)
+	∧ ¬(O_RDONLY ∈ flags ∧ O_RDWR ∈ flags)
+	∧ ¬(O_WRONLY ∈ flags ∧ O_RDWR ∈ flags) // данные флаги не могут быть выставлены одновременно
+        @grd13: O_TMPFILE ∈ flags ⇒ (O_WRONLY ∈ flags ∨ O_RDWR ∈ flags) // временный файл можно открывать только на запись
+        @grd14: card(Files) < MAX_FILES // @const лимит файлов в системе еще не исчерпан
+        @grd15: card(ProcFDs[{proc}]) < PROC_FILE_LIMIT // @const лимит открытых дескрипторов процесса еще не исчерпан
+        @grd16: card(ran(ProcFDs)) < FILE_LIMIT // @const лимит открытых дескрипторов всех процессов еще не исчерпан
+        @grd17: O_PATH ∉ flags // создавать файл с флагом O_PATH нельзя
+        @grd18: ∀f · f ∈ PathToRoot(parent) ∧ ProcUser(proc) ≠ ROOT_USER
+	⇒ ((ProcUser(proc) = FileUser(f)
+			∧ UEXECUTE ∈ DACPermissions(f))
+		∨ (ProcUser(proc) ≠ FileUser(f)
+			∧ (f ∉ dom(MaskACL) ∨ MaskACL(f) = ∅)
+			∧ FileGroup(f) ≠ ProcGroup(proc) ∧ ProcUser(proc) ↦ FileGroup(f) ∉ UserGroups
+			∧ OEXECUTE ∈ DACPermissions(f))
+		∨ (ProcUser(proc) ≠ FileUser(f)
+			∧ f ↦ ProcUser(proc) ∈ dom(UserACL) ∧ UEXECUTE ∈ UserACL(f ↦ ProcUser(proc))
+			∧ GEXECUTE ∈ MaskACL(f))
+		∨ (ProcUser(proc) ≠ FileUser(f)
+			∧ f ↦ ProcUser(proc) ∉ dom(UserACL)
+			∧ (∃g · (g ∈ {ProcGroup(proc)} ∪ (UserGroups[{ProcUser(proc)}])) // Anis требует, чтобы первое условие после квантора существования явно задавало тип (типа ему итерироваться надо -- а по чему?). Мы его переписали. То же самое несколько раз внизу (то же выражение)
+				∧ ((f ↦ g ∈ dom(GroupACL) ∧ GEXECUTE ∈ GroupACL(f ↦ g)) ∨ (g = FileGroup(f) ∧ f ∈ dom(GroupObjACL) ∧ GEXECUTE ∈ GroupObjACL(f))))
+			∧ f ∈ dom(MaskACL) ∧ GEXECUTE ∈ MaskACL(f))
+		∨ (ProcUser(proc) ≠ FileUser(f)
+			∧ f ∉ dom(MaskACL)
+			∧ (FileGroup(f) = ProcGroup(proc) ∨ ProcUser(proc) ↦ FileGroup(f) ∈ UserGroups)
+			∧ GEXECUTE ∈ DACPermissions(f))
+		∨ (ProcUser(proc) ≠ FileUser(f)
+			∧ f ∈ dom(MaskACL) ∧ MaskACL(f) ≠ ∅
+			∧ f ↦ ProcUser(proc) ∉ dom(UserACL)
+			∧ (∀g · (g ∈ {ProcGroup(proc)} ∪ (UserGroups[{ProcUser(proc)}])) ⇒ f ↦ g ∉ dom(GroupACL))
+			∧ FileGroup(f) ≠ ProcGroup(proc) ∧ ProcUser(proc) ↦ FileGroup(f) ∉ UserGroups
+			∧ OEXECUTE ∈ DACPermissions(f))) // если open выполнен не от имени суперпользователя, то
+                                             // у процесса должно быть право доступа на выполнение
+                                             // для каждой директории из пути от родительской директории
+                                             // создаваемого файла до корневой директории
+                                             // 
+                                             // проверка происходит по следующему алгоритму:
+                                             // 1) если пользователь текущего процесса является владельцем директории,
+                                             //    то у него должно быть право доступа на выполнение к ней
+                                             // 2) иначе, если маска ACL пустая, перейти на шаг 6 (из-за  бага 2004 года: https://superuser.com/questions/1356849/why-the-access-check-algorithm-from-man-acl-does-not-correspond-to-the-actual)
+                                             // 3) иначе, если пользователь не владелец, но в UserACL есть запись с директорией и пользователем,
+                                             //    то в этой записи должно быть право доступа на выполнение и маска ACL должна разрешать такой доступ
+                                             // 4) иначе если нет записи и в UserACL, но есть в GroupACL или GroupObjACL для директории и группы пользователя,
+                                             //    то в этой записи должно быть право доступа на выполнение и маска ACL должна разрешать такой доступ
+                                             // 5) иначе если нет маски, то есть запись о группе в GroupObjACL,
+                                             //    то в этой записи должно быть право доступа на выполнение
+                                             // 6) иначе право доступа ищется в поле other DAC
+        @grd19: ProcUser(proc) ≠ ROOT_USER
+	⇒ ((ProcUser(proc) = FileUser(parent)
+			∧ {UWRITE, UEXECUTE} ⊆ DACPermissions(parent))
+		∨ (ProcUser(proc) ≠ FileUser(parent)
+			∧ (parent ∉ dom(MaskACL) ∨ MaskACL(parent) = ∅)
+			∧ FileGroup(parent) ≠ ProcGroup(proc) ∧ ProcUser(proc) ↦ FileGroup(parent) ∉ UserGroups
+			∧ {OWRITE, OEXECUTE} ⊆ DACPermissions(parent))
+		∨ (ProcUser(proc) ≠ FileUser(parent)
+			∧ parent ↦ ProcUser(proc) ∈ dom(UserACL) ∧ {UWRITE, UEXECUTE} ⊆ UserACL(parent ↦ ProcUser(proc))
+			∧ {GWRITE, GEXECUTE} ⊆ MaskACL(parent))
+		∨ (ProcUser(proc) ≠ FileUser(parent)
+			∧ parent ↦ ProcUser(proc) ∉ dom(UserACL)
+			∧ (∃g · (g ∈ {ProcGroup(proc)} ∪ (UserGroups[{ProcUser(proc)}]))
+				∧ ((parent ↦ g ∈ dom(GroupACL) ∧ {GWRITE, GEXECUTE} ⊆ GroupACL(parent ↦ g)) ∨ (g = FileGroup(parent) ∧ parent ∈ dom(GroupObjACL) ∧ {GWRITE, GEXECUTE} ⊆ GroupObjACL(parent))))
+			∧ parent ∈ dom(MaskACL) ∧ {GWRITE, GEXECUTE} ⊆ MaskACL(parent))
+		∨ (ProcUser(proc) ≠ FileUser(parent)
+			∧ parent ∉ dom(MaskACL)
+			∧ (FileGroup(parent) = ProcGroup(proc) ∨ ProcUser(proc) ↦ FileGroup(parent) ∈ UserGroups)
+			∧ {GWRITE, GEXECUTE} ⊆ DACPermissions(parent))
+		∨ (ProcUser(proc) ≠ FileUser(parent)
+			∧ parent ∈ dom(MaskACL) ∧ MaskACL(parent) ≠ ∅
+			∧ parent ↦ ProcUser(proc) ∉ dom(UserACL)
+			∧ (∀g · (g ∈ {ProcGroup(proc)} ∪ (UserGroups[{ProcUser(proc)}])) ⇒ parent ↦ g ∉ dom(GroupACL))
+			∧ FileGroup(parent) ≠ ProcGroup(proc) ∧ ProcUser(proc) ↦ FileGroup(parent) ∉ UserGroups
+			∧ {OWRITE, OEXECUTE} ⊆ DACPermissions(parent))) // если open выполнен не от имени суперпользователя, то
+                                                            // для создания файла требуются права доступа на запись и выполнение к родительской директории
+                                                            // @depend[[FileGroup(parent)=ProcGroup(proc)]] является следствием  [group=FileGroup(parent)] и [group=ProcGroup(proc)]
+        @grd20: group ∈ Groups // @const
+        @grd21: SET_GID ∉ DACPermissions(parent) ⇒ group = ProcGroup(proc) // если флага SET_GID нет на родительской директории,
+                                                                           // то группой создаваемого файла будет группа текущего процесса
+        @grd22: SET_GID ∈ DACPermissions(parent) ⇒ group = FileGroup(parent) // если флаг SET_GID есть на родительской директории,
+                                                                             // то группой создаваемого файла будет группа родительской директории
+        @grd23: perms = mode ∖ (mode ∩ ProcUmask(proc)) // @const права доступа создаваемого файла ограничиваются маской процесса
+    then
+        @act1:  Files ≔ Files ∪ {file}
+        @act2:  FileParents ≔ FileParents ∪ {file ↦ (parent ↦ name)}
+        @act3:  FDs ≔ FDs ∪ {fd}
+        @act4:  FDNumber(fd) ≔ fdNumber
+        @act5:  ProcFDs ≔ ProcFDs ∪ {proc ↦ fd}
+        @act6:  FDFlags(fd) ≔ flags
+        @act7:  FDFile(fd) ≔ file
+        @act8:  DACPermissions(file) ≔ perms
+        @act9:  FileUser(file) ≔ ProcUser(proc)
+        @act10: FileGroup(file) ≔ group
+        @act11: FileXattrs(file) ≔ ∅
+        @act12: GroupObjACL ≔ GroupObjACL ∪ {file ↦ perms ∩ GROUP_PERMISSIONS} // TODO: support default ACL
+    end
+
+    event open_exists
+    any
+        proc // процесс, вызывающий open
+        parent // родительская директория открываемого файла
+        file // - открываемый файл (параметр не указывается явно в ProB)
+        name // имя открываемого файла
+        flags // флаги, с которыми будет открыт файл
+        fd // - файловый дескриптор, который вернет open (параметр не указывается явно в ProB)
+        fdNumber // - номер файлового дескриптора (параметр не указывается явно в ProB)
+    where
+        @grd1:  proc ∈ Procs // - @const
+        @grd2:  parent ∈ Folders
+        @grd3:  file ∈ Files // @const
+        @grd4:  file ↦ (parent ↦ name) ∈ FileParents // @const с таким именем в директории действительно есть файл
+        @grd5:  flags ⊆ OPEN_FLAGS // @const
+        @grd6:  fd ∈ FILE_DESCRIPTORS ∖ FDs // @const
+        @grd7:  fdNumber ∈ ℕ // @const
+        @grd8:  ∀pfd · proc ↦ pfd ∈ ProcFDs ⇒ FDNumber(pfd) ≠ fdNumber // @const номер нового дескриптора уникален для процесса
+        @grd9:  O_PATH ∉ flags ⇒ ¬(O_CREAT ∈ flags ∧ O_EXCL ∈ flags) // допустимая конфигурация флагов, чтобы выполнение пошло по пути open_exists
+        @grd10: O_RDONLY ∈ flags ∨ O_WRONLY ∈ flags ∨ O_RDWR ∈ flags // данные флаги взаимоисключаемы
+                                                                     // TODO: Also only if O_PATH ∉ flags?
+        @grd11: ¬(O_RDONLY ∈ flags ∧ O_WRONLY ∈ flags)
+	∧ ¬(O_RDONLY ∈ flags ∧ O_RDWR ∈ flags)
+	∧ ¬(O_WRONLY ∈ flags ∧ O_RDWR ∈ flags) // данные флаги не могут быть выставлены одновременно
+        @grd12: file ∈ Folders ∧ O_PATH ∉ flags ⇒ O_WRONLY ∉ flags ∧ O_RDWR ∉ flags // директорию открывать на запись с помощью open нельзя
+        @grd13: card(ProcFDs[{proc}]) < PROC_FILE_LIMIT // @const лимит открытых дескрипторов процесса еще не исчерпан
+        @grd14: card(ran(ProcFDs)) < FILE_LIMIT // @const лимит открытых дескрипторов всех процессов еще не исчерпан
+        @grd15: O_DIRECTORY ∈ flags ⇒ file ∈ Folders // если выставлен флаг O_DIRECTORY, то файл должен быть директорией
+        @grd16: O_DIRECTORY ∈ flags ∧ O_PATH ∉ flags ⇒ O_RDONLY ∈ flags // если выставлен флаг O_DIRECTORY,
+                                                                        // то открывать директорию можно только на чтение
+        @grd17: ∀f · f ∈ PathToRoot(parent) ∪ {parent} ∧ ProcUser(proc) ≠ ROOT_USER
+	⇒ ((ProcUser(proc) = FileUser(f)
+			∧ UEXECUTE ∈ DACPermissions(f))
+		∨ (ProcUser(proc) ≠ FileUser(f)
+			∧ (f ∉ dom(MaskACL) ∨ MaskACL(f) = ∅)
+			∧ FileGroup(f) ≠ ProcGroup(proc) ∧ ProcUser(proc) ↦ FileGroup(f) ∉ UserGroups
+			∧ OEXECUTE ∈ DACPermissions(f))
+		∨ (ProcUser(proc) ≠ FileUser(f)
+			∧ f ↦ ProcUser(proc) ∈ dom(UserACL) ∧ UEXECUTE ∈ UserACL(f ↦ ProcUser(proc))
+			∧ GEXECUTE ∈ MaskACL(f))
+		∨ (ProcUser(proc) ≠ FileUser(f)
+			∧ f ↦ ProcUser(proc) ∉ dom(UserACL)
+			∧ (∃g · (g ∈ {ProcGroup(proc)} ∪ (UserGroups[{ProcUser(proc)}]))
+				∧ ((f ↦ g ∈ dom(GroupACL) ∧ GEXECUTE ∈ GroupACL(f ↦ g)) ∨ (g = FileGroup(f) ∧ f ∈ dom(GroupObjACL) ∧ GEXECUTE ∈ GroupObjACL(f))))
+			∧ f ∈ dom(MaskACL) ∧ GEXECUTE ∈ MaskACL(f))
+		∨ (ProcUser(proc) ≠ FileUser(f)
+			∧ f ∉ dom(MaskACL)
+			∧ (FileGroup(f) = ProcGroup(proc) ∨ ProcUser(proc) ↦ FileGroup(f) ∈ UserGroups)
+			∧ GEXECUTE ∈ DACPermissions(f))
+		∨ (ProcUser(proc) ≠ FileUser(f)
+			∧ f ∈ dom(MaskACL) ∧ MaskACL(f) ≠ ∅
+			∧ f ↦ ProcUser(proc) ∉ dom(UserACL)
+			∧ (∀g · (g ∈ {ProcGroup(proc)} ∪ (UserGroups[{ProcUser(proc)}])) ⇒ f ↦ g ∉ dom(GroupACL))
+			∧ FileGroup(f) ≠ ProcGroup(proc) ∧ ProcUser(proc) ↦ FileGroup(f) ∉ UserGroups
+			∧ OEXECUTE ∈ DACPermissions(f))) // если open выполнен не от имени суперпользователя, то
+                                             // у процесса должно быть право доступа на выполнение
+                                             // для каждой директории из пути от родительской директории
+                                             // создаваемого файла до корневой директории,
+                                             // включая саму родительскую директорию
+        @grd18: ProcUser(proc) ≠ ROOT_USER ∧ O_RDONLY ∈ flags ∧ O_PATH ∉ flags
+	⇒ ((ProcUser(proc) = FileUser(file)
+			∧ UREAD ∈ DACPermissions(file))
+		∨ (ProcUser(proc) ≠ FileUser(file)
+			∧ (file ∉ dom(MaskACL) ∨ MaskACL(file) = ∅)
+			∧ FileGroup(file) ≠ ProcGroup(proc) ∧ ProcUser(proc) ↦ FileGroup(file) ∉ UserGroups
+			∧ OREAD ∈ DACPermissions(file))
+		∨ (ProcUser(proc) ≠ FileUser(file)
+			∧ file ↦ ProcUser(proc) ∈ dom(UserACL) ∧ UREAD ∈ UserACL(file ↦ ProcUser(proc))
+			∧ GREAD ∈ MaskACL(file))
+		∨ (ProcUser(proc) ≠ FileUser(file)
+			∧ file ↦ ProcUser(proc) ∉ dom(UserACL)
+			∧ (∃g · (g ∈ {ProcGroup(proc)} ∪ (UserGroups[{ProcUser(proc)}]))
+				∧ ((file ↦ g ∈ dom(GroupACL) ∧ GREAD ∈ GroupACL(file ↦ g)) ∨ (g = FileGroup(file) ∧ file ∈ dom(GroupObjACL) ∧ GREAD ∈ GroupObjACL(file))))
+			∧ file ∈ dom(MaskACL) ∧ GREAD ∈ MaskACL(file))
+		∨ (ProcUser(proc) ≠ FileUser(file)
+			∧ file ∉ dom(MaskACL)
+			∧ (FileGroup(file) = ProcGroup(proc) ∨ ProcUser(proc) ↦ FileGroup(file) ∈ UserGroups)
+			∧ GREAD ∈ DACPermissions(file))
+		∨ (ProcUser(proc) ≠ FileUser(file)
+			∧ file ∈ dom(MaskACL) ∧ MaskACL(file) ≠ ∅
+			∧ file ↦ ProcUser(proc) ∉ dom(UserACL)
+			∧ (∀g · (g ∈ {ProcGroup(proc)} ∪ (UserGroups[{ProcUser(proc)}])) ⇒ file ↦ g ∉ dom(GroupACL))
+			∧ FileGroup(file) ≠ ProcGroup(proc) ∧ ProcUser(proc) ↦ FileGroup(file) ∉ UserGroups
+			∧ OREAD ∈ DACPermissions(file))) // если open выполнен не от имени суперпользователя, то
+                                             // для открытия файла на чтение требуется право доступа на чтение к нему
+        @grd19: ProcUser(proc) ≠ ROOT_USER ∧ O_WRONLY ∈ flags ∧ O_PATH ∉ flags
+	⇒ ((ProcUser(proc) = FileUser(file)
+			∧ UWRITE ∈ DACPermissions(file))
+		∨ (ProcUser(proc) ≠ FileUser(file)
+			∧ (file ∉ dom(MaskACL) ∨ MaskACL(file) = ∅)
+			∧ FileGroup(file) ≠ ProcGroup(proc) ∧ ProcUser(proc) ↦ FileGroup(file) ∉ UserGroups
+			∧ OWRITE ∈ DACPermissions(file))
+		∨ (ProcUser(proc) ≠ FileUser(file)
+			∧ file ↦ ProcUser(proc) ∈ dom(UserACL) ∧ UWRITE ∈ UserACL(file ↦ ProcUser(proc))
+			∧ GWRITE ∈ MaskACL(file))
+		∨ (ProcUser(proc) ≠ FileUser(file)
+			∧ file ↦ ProcUser(proc) ∉ dom(UserACL)
+			∧ (∃g · (g ∈ {ProcGroup(proc)} ∪ (UserGroups[{ProcUser(proc)}]))
+				∧ ((file ↦ g ∈ dom(GroupACL) ∧ GWRITE ∈ GroupACL(file ↦ g)) ∨ (g = FileGroup(file) ∧ file ∈ dom(GroupObjACL) ∧ GWRITE ∈ GroupObjACL(file))))
+			∧ file ∈ dom(MaskACL) ∧ GWRITE ∈ MaskACL(file))
+		∨ (ProcUser(proc) ≠ FileUser(file)
+			∧ file ∉ dom(MaskACL)
+			∧ (FileGroup(file) = ProcGroup(proc) ∨ ProcUser(proc) ↦ FileGroup(file) ∈ UserGroups)
+			∧ GWRITE ∈ DACPermissions(file))
+		∨ (ProcUser(proc) ≠ FileUser(file)
+			∧ file ∈ dom(MaskACL) ∧ MaskACL(file) ≠ ∅
+			∧ file ↦ ProcUser(proc) ∉ dom(UserACL)
+			∧ (∀g · (g ∈ {ProcGroup(proc)} ∪ (UserGroups[{ProcUser(proc)}])) ⇒ file ↦ g ∉ dom(GroupACL))
+			∧ FileGroup(file) ≠ ProcGroup(proc) ∧ ProcUser(proc) ↦ FileGroup(file) ∉ UserGroups
+			∧ OWRITE ∈ DACPermissions(file))) // если open выполнен не от имени суперпользователя, то
+                                              // для открытия файла на запись требуется право доступа на запись к нему
+        @grd20: ProcUser(proc) ≠ ROOT_USER ∧ O_RDWR ∈ flags ∧ O_PATH ∉ flags
+	⇒ ((ProcUser(proc) = FileUser(file)
+			∧ {UREAD, UWRITE} ⊆ DACPermissions(file))
+		∨ (ProcUser(proc) ≠ FileUser(file)
+			∧ (file ∉ dom(MaskACL) ∨ MaskACL(file) = ∅)
+			∧ FileGroup(file) ≠ ProcGroup(proc) ∧ ProcUser(proc) ↦ FileGroup(file) ∉ UserGroups
+			∧ {OREAD, OWRITE} ⊆ DACPermissions(file))
+		∨ (ProcUser(proc) ≠ FileUser(file)
+			∧ file ↦ ProcUser(proc) ∈ dom(UserACL) ∧ {UREAD, UWRITE} ⊆ UserACL(file ↦ ProcUser(proc))
+			∧ {GREAD, GWRITE} ⊆ MaskACL(file))
+		∨ (ProcUser(proc) ≠ FileUser(file)
+			∧ file ↦ ProcUser(proc) ∉ dom(UserACL)
+			∧ (∃g · (g ∈ {ProcGroup(proc)} ∪ (UserGroups[{ProcUser(proc)}]))
+				∧ ((file ↦ g ∈ dom(GroupACL) ∧ {GREAD, GWRITE} ⊆ GroupACL(file ↦ g)) ∨ (g = FileGroup(file) ∧ file ∈ dom(GroupObjACL) ∧ {GREAD, GWRITE} ⊆ GroupObjACL(file))))
+			∧ file ∈ dom(MaskACL) ∧ {GREAD, GWRITE} ⊆ MaskACL(file))
+		∨ (ProcUser(proc) ≠ FileUser(file)
+			∧ file ∉ dom(MaskACL)
+			∧ (FileGroup(file) = ProcGroup(proc) ∨ ProcUser(proc) ↦ FileGroup(file) ∈ UserGroups)
+			∧ {GREAD, GWRITE} ⊆ DACPermissions(file))
+		∨ (ProcUser(proc) ≠ FileUser(file)
+			∧ file ∈ dom(MaskACL) ∧ MaskACL(file) ≠ ∅
+			∧ file ↦ ProcUser(proc) ∉ dom(UserACL)
+			∧ (∀g · (g ∈ {ProcGroup(proc)} ∪ (UserGroups[{ProcUser(proc)}])) ⇒ file ↦ g ∉ dom(GroupACL))
+			∧ FileGroup(file) ≠ ProcGroup(proc) ∧ ProcUser(proc) ↦ FileGroup(file) ∉ UserGroups
+			∧ {OREAD, OWRITE} ⊆ DACPermissions(file))) // если open выполнен не от имени суперпользователя, то
+                                                       // для открытия файла на чтение и запись требуется права доступа на чтение и запись к нему
+    then
+        @act1: FDs ≔ FDs ∪ {fd}
+        @act2: FDNumber(fd) ≔ fdNumber
+        @act3: ProcFDs ≔ ProcFDs ∪ {proc ↦ fd}
+        @act4: FDFlags(fd) ≔ flags
+        @act5: FDFile(fd) ≔ file
+    end
+
+    event openat_create
+    any
+        proc // процесс, вызывающий openat
+        dirfd // файловый дескриптор директории, относительно которой будет создан файл (can be AT_FDCWD)
+        parent // родительская директория создаваемого файла
+        file // - создаваемый файл (параметр не указывается явно в ProB)
+        name // имя создаваемого файла
+        flags // флаги, с которыми будет создан файл
+        mode // права доступа, переданные в качестве параметра openat
+        fd // - файловый дескриптор, который вернет openat (параметр не указывается явно в ProB)
+        fdNumber // - номер файлового дескриптора (параметр не указывается явно в ProB)
+        cwd // - директория, относительно которой будет создан файл (параметр не указывается явно в ProB)
+        group // - группа файла (параметр не указывается явно в ProB)
+        perms // - итоговые права доступа, с которыми будет создан файл (параметр не указывается явно в ProB)
+    where
+        @grd1:  proc ∈ Procs
+        @grd2:  dirfd ∈ FILE_DESCRIPTORS_EXTENDED
+        @grd3:  parent ∈ Folders
+        @grd4:  file ∈ ((FILES ∖ Files) ∖ ran(FDFile)) ∖ ran(ProcCwd)
+        @grd5:  ∀f · f ∈ dom(FileParents) ⇒ f ↦ (parent ↦ name) ∉ FileParents
+        @grd6:  flags ⊆ OPEN_FLAGS
+        @grd7:  mode ⊆ PERMISSIONS
+        @grd8:  fd ∈ FILE_DESCRIPTORS ∖ FDs
+        @grd9:  fdNumber ∈ ℕ
+        @grd10: cwd ∈ Folders
+        @grd11: dirfd = AT_FDCWD ⇒ cwd = ProcCwd(proc) // если переданный файловый дескриптор равен AT_FDCWD,
+                                                       // то директорией будет текущая рабочая директория процесса
+        @grd12: dirfd ≠ AT_FDCWD ⇒ proc ↦ dirfd ∈ ProcFDs ∧ cwd = FDFile(dirfd) // иначе это будет директория, соответствующая дескриптору
+        @grd13: cwd ∈ Folders // Parent directory must not be deleted
+        @grd14: cwd ∈ PathToRoot(parent) ∪ {parent} // Parent directory must be located between ROOT and created file
+        @grd15: ∀pfd · proc ↦ pfd ∈ ProcFDs ⇒ FDNumber(pfd) ≠ fdNumber
+        @grd16: O_CREAT ∈ flags ∨ O_TMPFILE ∈ flags
+        @grd17: O_RDONLY ∈ flags ∨ O_WRONLY ∈ flags ∨ O_RDWR ∈ flags
+        @grd18: ¬(O_RDONLY ∈ flags ∧ O_WRONLY ∈ flags)
+	∧ ¬(O_RDONLY ∈ flags ∧ O_RDWR ∈ flags)
+	∧ ¬(O_WRONLY ∈ flags ∧ O_RDWR ∈ flags)
+        @grd19: O_TMPFILE ∈ flags ⇒ (O_WRONLY ∈ flags ∨ O_RDWR ∈ flags)
+        @grd20: O_PATH ∉ flags
+        @grd21: card(Files) < MAX_FILES
+        @grd22: card(ProcFDs[{proc}]) < PROC_FILE_LIMIT
+        @grd23: card(ran(ProcFDs)) < FILE_LIMIT
+        @grd24: ∀f · f ∈ PathToRoot(parent) ∧ ProcUser(proc) ≠ ROOT_USER ∧ f ∉ PathToRoot(cwd)
+	⇒ ((ProcUser(proc) = FileUser(f)
+			∧ UEXECUTE ∈ DACPermissions(f))
+		∨ (ProcUser(proc) ≠ FileUser(f)
+			∧ (f ∉ dom(MaskACL) ∨ MaskACL(f) = ∅)
+			∧ FileGroup(f) ≠ ProcGroup(proc) ∧ ProcUser(proc) ↦ FileGroup(f) ∉ UserGroups
+			∧ OEXECUTE ∈ DACPermissions(f))
+		∨ (ProcUser(proc) ≠ FileUser(f)
+			∧ f ↦ ProcUser(proc) ∈ dom(UserACL) ∧ UEXECUTE ∈ UserACL(f ↦ ProcUser(proc))
+			∧ GEXECUTE ∈ MaskACL(f))
+		∨ (ProcUser(proc) ≠ FileUser(f)
+			∧ f ↦ ProcUser(proc) ∉ dom(UserACL)
+			∧ (∃g · (g ∈ {ProcGroup(proc)} ∪ (UserGroups[{ProcUser(proc)}]))
+				∧ ((f ↦ g ∈ dom(GroupACL) ∧ GEXECUTE ∈ GroupACL(f ↦ g)) ∨ (g = FileGroup(f) ∧ f ∈ dom(GroupObjACL) ∧ GEXECUTE ∈ GroupObjACL(f))))
+			∧ f ∈ dom(MaskACL) ∧ GEXECUTE ∈ MaskACL(f))
+		∨ (ProcUser(proc) ≠ FileUser(f)
+			∧ f ∉ dom(MaskACL)
+			∧ (FileGroup(f) = ProcGroup(proc) ∨ ProcUser(proc) ↦ FileGroup(f) ∈ UserGroups)
+			∧ GEXECUTE ∈ DACPermissions(f))
+		∨ (ProcUser(proc) ≠ FileUser(f)
+			∧ f ∈ dom(MaskACL) ∧ MaskACL(f) ≠ ∅
+			∧ f ↦ ProcUser(proc) ∉ dom(UserACL)
+			∧ (∀g · (g ∈ {ProcGroup(proc)} ∪ (UserGroups[{ProcUser(proc)}])) ⇒ f ↦ g ∉ dom(GroupACL))
+			∧ FileGroup(f) ≠ ProcGroup(proc) ∧ ProcUser(proc) ↦ FileGroup(f) ∉ UserGroups
+			∧ OEXECUTE ∈ DACPermissions(f))) // если open выполнен не от имени суперпользователя, то
+                                             // у процесса должно быть право доступа на выполнение
+                                             // для каждой директории из пути от родительской директории
+                                             // создаваемого файла до директории cwd
+        @grd25: ProcUser(proc) ≠ ROOT_USER
+	⇒ ((ProcUser(proc) = FileUser(parent)
+			∧ {UWRITE, UEXECUTE} ⊆ DACPermissions(parent))
+		∨ (ProcUser(proc) ≠ FileUser(parent)
+			∧ (parent ∉ dom(MaskACL) ∨ MaskACL(parent) = ∅)
+			∧ FileGroup(parent) ≠ ProcGroup(proc) ∧ ProcUser(proc) ↦ FileGroup(parent) ∉ UserGroups
+			∧ {OWRITE, OEXECUTE} ⊆ DACPermissions(parent))
+		∨ (ProcUser(proc) ≠ FileUser(parent)
+			∧ parent ↦ ProcUser(proc) ∈ dom(UserACL) ∧ {UWRITE, UEXECUTE} ⊆ UserACL(parent ↦ ProcUser(proc))
+			∧ {GWRITE, GEXECUTE} ⊆ MaskACL(parent))
+		∨ (ProcUser(proc) ≠ FileUser(parent)
+			∧ parent ↦ ProcUser(proc) ∉ dom(UserACL)
+			∧ (∃g · (g ∈ {ProcGroup(proc)} ∪ (UserGroups[{ProcUser(proc)}]))
+				∧ ((parent ↦ g ∈ dom(GroupACL) ∧ {GWRITE, GEXECUTE} ⊆ GroupACL(parent ↦ g)) ∨ (g = FileGroup(parent) ∧ parent ∈ dom(GroupObjACL) ∧ {GWRITE, GEXECUTE} ⊆ GroupObjACL(parent))))
+			∧ parent ∈ dom(MaskACL) ∧ {GWRITE, GEXECUTE} ⊆ MaskACL(parent))
+		∨ (ProcUser(proc) ≠ FileUser(parent)
+			∧ parent ∉ dom(MaskACL)
+			∧ (FileGroup(parent) = ProcGroup(proc) ∨ ProcUser(proc) ↦ FileGroup(parent) ∈ UserGroups)
+			∧ {GWRITE, GEXECUTE} ⊆ DACPermissions(parent))
+		∨ (ProcUser(proc) ≠ FileUser(parent)
+			∧ parent ∈ dom(MaskACL) ∧ MaskACL(parent) ≠ ∅
+			∧ parent ↦ ProcUser(proc) ∉ dom(UserACL)
+			∧ (∀g · (g ∈ {ProcGroup(proc)} ∪ (UserGroups[{ProcUser(proc)}])) ⇒ parent ↦ g ∉ dom(GroupACL))
+			∧ FileGroup(parent) ≠ ProcGroup(proc) ∧ ProcUser(proc) ↦ FileGroup(parent) ∉ UserGroups
+			∧ {OWRITE, OEXECUTE} ⊆ DACPermissions(parent))) // если open выполнен не от имени суперпользователя, то
+                                                            // для создания файла требуются права доступа на запись и выполнение к родительской директории
+        @grd26: group ∈ Groups
+        @grd27: SET_GID ∉ DACPermissions(parent) ⇒ group = ProcGroup(proc) // если флага SET_GID нет на родительской директории,
+                                                                           // то группой создаваемого файла будет группа текущего процесса
+        @grd28: SET_GID ∈ DACPermissions(parent) ⇒ group = FileGroup(parent) // если флаг SET_GID есть на родительской директории,
+                                                                             // то группой создаваемого файла будет группа родительской директории
+        @grd29: perms = mode ∖ (mode ∩ ProcUmask(proc)) // права доступа создаваемого файла ограничиваются маской процесса
+    then
+        @act1:  Files ≔ Files ∪ {file}
+        @act2:  FileParents ≔ FileParents ∪ {file ↦ (parent ↦ name)}
+        @act3:  FDs ≔ FDs ∪ {fd}
+        @act4:  FDNumber(fd) ≔ fdNumber
+        @act5:  ProcFDs ≔ ProcFDs ∪ {proc ↦ fd}
+        @act6:  FDFlags(fd) ≔ flags
+        @act7:  FDFile(fd) ≔ file
+        @act8:  DACPermissions(file) ≔ perms
+        @act9:  FileUser(file) ≔ ProcUser(proc)
+        @act10: FileGroup(file) ≔ group
+        @act11: FileXattrs(file) ≔ ∅
+        @act12: GroupObjACL ≔ GroupObjACL ∪ {file ↦ perms ∩ GROUP_PERMISSIONS}
+    end
+
+    event openat_exists // in case of absolute pathname you need to call open_create or open_exists
+    any
+        proc
+        dirfd // can be AT_FDCWD
+        parent
+        file // -?
+        name
+        flags
+        fd // -
+        fdNumber // -
+        cwd // -
+    where
+        @grd1:  proc ∈ Procs
+        @grd2:  dirfd ∈ FILE_DESCRIPTORS_EXTENDED
+        @grd3:  parent ∈ Folders
+        @grd4:  file ∈ Files
+        @grd5:  file ↦ (parent ↦ name) ∈ FileParents
+        @grd6:  flags ⊆ OPEN_FLAGS
+        @grd7:  fd ∈ FILE_DESCRIPTORS ∖ FDs
+        @grd8:  fdNumber ∈ ℕ
+        @grd9:  cwd ∈ Folders
+        @grd10: dirfd = AT_FDCWD ⇒ cwd = ProcCwd(proc)
+        @grd11: dirfd ≠ AT_FDCWD ⇒ proc ↦ dirfd ∈ ProcFDs ∧ cwd = FDFile(dirfd)
+        @grd12: cwd ∈ PathToRoot(parent) ∪ {parent} // Parent directory must be located between ROOT and created file
+        @grd13: ∀pfd · proc ↦ pfd ∈ ProcFDs ⇒ FDNumber(pfd) ≠ fdNumber
+        @grd14: O_PATH ∉ flags ⇒ ¬(O_CREAT ∈ flags ∧ O_EXCL ∈ flags)
+        @grd15: O_RDONLY ∈ flags ∨ O_WRONLY ∈ flags ∨ O_RDWR ∈ flags
+        @grd16: ¬(O_RDONLY ∈ flags ∧ O_WRONLY ∈ flags)
+	∧ ¬(O_RDONLY ∈ flags ∧ O_RDWR ∈ flags)
+	∧ ¬(O_WRONLY ∈ flags ∧ O_RDWR ∈ flags)
+        @grd17: file ∈ Folders ∧ O_PATH ∉ flags ⇒ O_WRONLY ∉ flags ∧ O_RDWR ∉ flags
+        @grd18: card(ProcFDs[{proc}]) < PROC_FILE_LIMIT
+        @grd19: card(ran(ProcFDs)) < FILE_LIMIT
+        @grd20: O_DIRECTORY ∈ flags ⇒ file ∈ Folders
+        @grd21: O_DIRECTORY ∈ flags ∧ O_PATH ∉ flags ⇒ O_RDONLY ∈ flags
+        @grd22: ∀f · f ∈ PathToRoot(parent) ∪ {parent} ∧ ProcUser(proc) ≠ ROOT_USER ∧ f ∉ PathToRoot(cwd)
+	⇒ ((ProcUser(proc) = FileUser(f)
+			∧ UEXECUTE ∈ DACPermissions(f))
+		∨ (ProcUser(proc) ≠ FileUser(f)
+			∧ (f ∉ dom(MaskACL) ∨ MaskACL(f) = ∅)
+			∧ FileGroup(f) ≠ ProcGroup(proc) ∧ ProcUser(proc) ↦ FileGroup(f) ∉ UserGroups
+			∧ OEXECUTE ∈ DACPermissions(f))
+		∨ (ProcUser(proc) ≠ FileUser(f)
+			∧ f ↦ ProcUser(proc) ∈ dom(UserACL) ∧ UEXECUTE ∈ UserACL(f ↦ ProcUser(proc))
+			∧ GEXECUTE ∈ MaskACL(f))
+		∨ (ProcUser(proc) ≠ FileUser(f)
+			∧ f ↦ ProcUser(proc) ∉ dom(UserACL)
+			∧ (∃g · (g ∈ {ProcGroup(proc)} ∪ (UserGroups[{ProcUser(proc)}]))
+				∧ ((f ↦ g ∈ dom(GroupACL) ∧ GEXECUTE ∈ GroupACL(f ↦ g)) ∨ (g = FileGroup(f) ∧ f ∈ dom(GroupObjACL) ∧ GEXECUTE ∈ GroupObjACL(f))))
+			∧ f ∈ dom(MaskACL) ∧ GEXECUTE ∈ MaskACL(f))
+		∨ (ProcUser(proc) ≠ FileUser(f)
+			∧ f ∉ dom(MaskACL)
+			∧ (FileGroup(f) = ProcGroup(proc) ∨ ProcUser(proc) ↦ FileGroup(f) ∈ UserGroups)
+			∧ GEXECUTE ∈ DACPermissions(f))
+		∨ (ProcUser(proc) ≠ FileUser(f)
+			∧ f ∈ dom(MaskACL) ∧ MaskACL(f) ≠ ∅
+			∧ f ↦ ProcUser(proc) ∉ dom(UserACL)
+			∧ (∀g · (g ∈ {ProcGroup(proc)} ∪ (UserGroups[{ProcUser(proc)}])) ⇒ f ↦ g ∉ dom(GroupACL))
+			∧ FileGroup(f) ≠ ProcGroup(proc) ∧ ProcUser(proc) ↦ FileGroup(f) ∉ UserGroups
+			∧ OEXECUTE ∈ DACPermissions(f)))
+        @grd23: ProcUser(proc) ≠ ROOT_USER ∧ O_RDONLY ∈ flags ∧ O_PATH ∉ flags
+	⇒ ((ProcUser(proc) = FileUser(file)
+			∧ UREAD ∈ DACPermissions(file))
+		∨ (ProcUser(proc) ≠ FileUser(file)
+			∧ (file ∉ dom(MaskACL) ∨ MaskACL(file) = ∅)
+			∧ FileGroup(file) ≠ ProcGroup(proc) ∧ ProcUser(proc) ↦ FileGroup(file) ∉ UserGroups
+			∧ OREAD ∈ DACPermissions(file))
+		∨ (ProcUser(proc) ≠ FileUser(file)
+			∧ file ↦ ProcUser(proc) ∈ dom(UserACL) ∧ UREAD ∈ UserACL(file ↦ ProcUser(proc))
+			∧ GREAD ∈ MaskACL(file))
+		∨ (ProcUser(proc) ≠ FileUser(file)
+			∧ file ↦ ProcUser(proc) ∉ dom(UserACL)
+			∧ (∃g · (g ∈ {ProcGroup(proc)} ∪ (UserGroups[{ProcUser(proc)}]))
+				∧ ((file ↦ g ∈ dom(GroupACL) ∧ GREAD ∈ GroupACL(file ↦ g)) ∨ (g = FileGroup(file) ∧ file ∈ dom(GroupObjACL) ∧ GREAD ∈ GroupObjACL(file))))
+			∧ file ∈ dom(MaskACL) ∧ GREAD ∈ MaskACL(file))
+		∨ (ProcUser(proc) ≠ FileUser(file)
+			∧ file ∉ dom(MaskACL)
+			∧ (FileGroup(file) = ProcGroup(proc) ∨ ProcUser(proc) ↦ FileGroup(file) ∈ UserGroups)
+			∧ GREAD ∈ DACPermissions(file))
+		∨ (ProcUser(proc) ≠ FileUser(file)
+			∧ file ∈ dom(MaskACL) ∧ MaskACL(file) ≠ ∅
+			∧ file ↦ ProcUser(proc) ∉ dom(UserACL)
+			∧ (∀g · (g ∈ {ProcGroup(proc)} ∪ (UserGroups[{ProcUser(proc)}])) ⇒ file ↦ g ∉ dom(GroupACL))
+			∧ FileGroup(file) ≠ ProcGroup(proc) ∧ ProcUser(proc) ↦ FileGroup(file) ∉ UserGroups
+			∧ OREAD ∈ DACPermissions(file)))
+        @grd24: ProcUser(proc) ≠ ROOT_USER ∧ O_WRONLY ∈ flags ∧ O_PATH ∉ flags
+	⇒ ((ProcUser(proc) = FileUser(file)
+			∧ UWRITE ∈ DACPermissions(file))
+		∨ (ProcUser(proc) ≠ FileUser(file)
+			∧ (file ∉ dom(MaskACL) ∨ MaskACL(file) = ∅)
+			∧ FileGroup(file) ≠ ProcGroup(proc) ∧ ProcUser(proc) ↦ FileGroup(file) ∉ UserGroups
+			∧ OWRITE ∈ DACPermissions(file))
+		∨ (ProcUser(proc) ≠ FileUser(file)
+			∧ file ↦ ProcUser(proc) ∈ dom(UserACL) ∧ UWRITE ∈ UserACL(file ↦ ProcUser(proc))
+			∧ GWRITE ∈ MaskACL(file))
+		∨ (ProcUser(proc) ≠ FileUser(file)
+			∧ file ↦ ProcUser(proc) ∉ dom(UserACL)
+			∧ (∃g · (g ∈ {ProcGroup(proc)} ∪ (UserGroups[{ProcUser(proc)}]))
+				∧ ((file ↦ g ∈ dom(GroupACL) ∧ GWRITE ∈ GroupACL(file ↦ g)) ∨ (g = FileGroup(file) ∧ file ∈ dom(GroupObjACL) ∧ GWRITE ∈ GroupObjACL(file))))
+			∧ file ∈ dom(MaskACL) ∧ GWRITE ∈ MaskACL(file))
+		∨ (ProcUser(proc) ≠ FileUser(file)
+			∧ file ∉ dom(MaskACL)
+			∧ (FileGroup(file) = ProcGroup(proc) ∨ ProcUser(proc) ↦ FileGroup(file) ∈ UserGroups)
+			∧ GWRITE ∈ DACPermissions(file))
+		∨ (ProcUser(proc) ≠ FileUser(file)
+			∧ file ∈ dom(MaskACL) ∧ MaskACL(file) ≠ ∅
+			∧ file ↦ ProcUser(proc) ∉ dom(UserACL)
+			∧ (∀g · (g ∈ {ProcGroup(proc)} ∪ (UserGroups[{ProcUser(proc)}])) ⇒ file ↦ g ∉ dom(GroupACL))
+			∧ FileGroup(file) ≠ ProcGroup(proc) ∧ ProcUser(proc) ↦ FileGroup(file) ∉ UserGroups
+			∧ OWRITE ∈ DACPermissions(file)))
+        @grd25: ProcUser(proc) ≠ ROOT_USER ∧ O_RDWR ∈ flags ∧ O_PATH ∉ flags
+	⇒ ((ProcUser(proc) = FileUser(file)
+			∧ {UREAD, UWRITE} ⊆ DACPermissions(file))
+		∨ (ProcUser(proc) ≠ FileUser(file)
+			∧ (file ∉ dom(MaskACL) ∨ MaskACL(file) = ∅)
+			∧ FileGroup(file) ≠ ProcGroup(proc) ∧ ProcUser(proc) ↦ FileGroup(file) ∉ UserGroups
+			∧ {OREAD, OWRITE} ⊆ DACPermissions(file))
+		∨ (ProcUser(proc) ≠ FileUser(file)
+			∧ file ↦ ProcUser(proc) ∈ dom(UserACL) ∧ {UREAD, UWRITE} ⊆ UserACL(file ↦ ProcUser(proc))
+			∧ {GREAD, GWRITE} ⊆ MaskACL(file))
+		∨ (ProcUser(proc) ≠ FileUser(file)
+			∧ file ↦ ProcUser(proc) ∉ dom(UserACL)
+			∧ (∃g · (g ∈ {ProcGroup(proc)} ∪ (UserGroups[{ProcUser(proc)}]))
+				∧ ((file ↦ g ∈ dom(GroupACL) ∧ {GREAD, GWRITE} ⊆ GroupACL(file ↦ g)) ∨ (g = FileGroup(file) ∧ file ∈ dom(GroupObjACL) ∧ {GREAD, GWRITE} ⊆ GroupObjACL(file))))
+			∧ file ∈ dom(MaskACL) ∧ {GREAD, GWRITE} ⊆ MaskACL(file))
+		∨ (ProcUser(proc) ≠ FileUser(file)
+			∧ file ∉ dom(MaskACL)
+			∧ (FileGroup(file) = ProcGroup(proc) ∨ ProcUser(proc) ↦ FileGroup(file) ∈ UserGroups)
+			∧ {GREAD, GWRITE} ⊆ DACPermissions(file))
+		∨ (ProcUser(proc) ≠ FileUser(file)
+			∧ file ∈ dom(MaskACL) ∧ MaskACL(file) ≠ ∅
+			∧ file ↦ ProcUser(proc) ∉ dom(UserACL)
+			∧ (∀g · (g ∈ {ProcGroup(proc)} ∪ (UserGroups[{ProcUser(proc)}])) ⇒ file ↦ g ∉ dom(GroupACL))
+			∧ FileGroup(file) ≠ ProcGroup(proc) ∧ ProcUser(proc) ↦ FileGroup(file) ∉ UserGroups
+			∧ {OREAD, OWRITE} ⊆ DACPermissions(file)))
+    then
+        @act1: FDs ≔ FDs ∪ {fd}
+        @act2: FDNumber(fd) ≔ fdNumber
+        @act3: ProcFDs ≔ ProcFDs ∪ {proc ↦ fd}
+        @act4: FDFlags(fd) ≔ flags
+        @act5: FDFile(fd) ≔ file
+    end
+
+    event mkdir // TODO: add support for mkdirat?
+    any
+        proc
+        parent
+        folder // -?
+        name
+        mode
+        group // -
+        perms // -
+    where
+        @grd1:  proc ∈ Procs // @const
+        @grd2:  parent ∈ Folders
+        @grd3:  folder ∈ (FILES ∖ Files) ∖ ran(FDFile) // @const
+        @grd4:  ∀f · f ∈ dom(FileParents) ⇒ f ↦ (parent ↦ name) ∉ FileParents
+        @grd5:  mode ⊆ PERMISSIONS // @const
+        @grd6:  group ∈ Groups // @const
+        @grd7:  card(Files) < MAX_FILES // @const
+        @grd8:  ∀p · p ∈ Procs ⇒ ProcEXE(p) ≠ folder // @const
+        @grd9:  SET_GID ∉ DACPermissions(parent) ⇒ group = ProcGroup(proc)
+        @grd10: SET_GID ∈ DACPermissions(parent) ⇒ group = FileGroup(parent)
+        @grd11: ∀f · f ∈ PathToRoot(parent) ∧ ProcUser(proc) ≠ ROOT_USER
+	⇒ ((ProcUser(proc) = FileUser(f)
+			∧ UEXECUTE ∈ DACPermissions(f))
+		∨ (ProcUser(proc) ≠ FileUser(f)
+			∧ (f ∉ dom(MaskACL) ∨ MaskACL(f) = ∅)
+			∧ FileGroup(f) ≠ ProcGroup(proc) ∧ ProcUser(proc) ↦ FileGroup(f) ∉ UserGroups
+			∧ OEXECUTE ∈ DACPermissions(f))
+		∨ (ProcUser(proc) ≠ FileUser(f)
+			∧ f ↦ ProcUser(proc) ∈ dom(UserACL) ∧ UEXECUTE ∈ UserACL(f ↦ ProcUser(proc))
+			∧ GEXECUTE ∈ MaskACL(f))
+		∨ (ProcUser(proc) ≠ FileUser(f)
+			∧ f ↦ ProcUser(proc) ∉ dom(UserACL)
+			∧ (∃g · (g ∈ {ProcGroup(proc)} ∪ (UserGroups[{ProcUser(proc)}]))
+				∧ ((f ↦ g ∈ dom(GroupACL) ∧ GEXECUTE ∈ GroupACL(f ↦ g)) ∨ (g = FileGroup(f) ∧ f ∈ dom(GroupObjACL) ∧ GEXECUTE ∈ GroupObjACL(f))))
+			∧ f ∈ dom(MaskACL) ∧ GEXECUTE ∈ MaskACL(f))
+		∨ (ProcUser(proc) ≠ FileUser(f)
+			∧ f ∉ dom(MaskACL)
+			∧ (FileGroup(f) = ProcGroup(proc) ∨ ProcUser(proc) ↦ FileGroup(f) ∈ UserGroups)
+			∧ GEXECUTE ∈ DACPermissions(f))
+		∨ (ProcUser(proc) ≠ FileUser(f)
+			∧ f ∈ dom(MaskACL) ∧ MaskACL(f) ≠ ∅
+			∧ f ↦ ProcUser(proc) ∉ dom(UserACL)
+			∧ (∀g · (g ∈ {ProcGroup(proc)} ∪ (UserGroups[{ProcUser(proc)}])) ⇒ f ↦ g ∉ dom(GroupACL))
+			∧ FileGroup(f) ≠ ProcGroup(proc) ∧ ProcUser(proc) ↦ FileGroup(f) ∉ UserGroups
+			∧ OEXECUTE ∈ DACPermissions(f)))
+        @grd12: ProcUser(proc) ≠ ROOT_USER
+	⇒ ((ProcUser(proc) = FileUser(parent)
+			∧ {UWRITE, UEXECUTE} ⊆ DACPermissions(parent))
+		∨ (ProcUser(proc) ≠ FileUser(parent)
+			∧ (parent ∉ dom(MaskACL) ∨ MaskACL(parent) = ∅)
+			∧ FileGroup(parent) ≠ ProcGroup(proc) ∧ ProcUser(proc) ↦ FileGroup(parent) ∉ UserGroups
+			∧ {OWRITE, OEXECUTE} ⊆ DACPermissions(parent))
+		∨ (ProcUser(proc) ≠ FileUser(parent)
+			∧ parent ↦ ProcUser(proc) ∈ dom(UserACL) ∧ {UWRITE, UEXECUTE} ⊆ UserACL(parent ↦ ProcUser(proc))
+			∧ {GWRITE, GEXECUTE} ⊆ MaskACL(parent))
+		∨ (ProcUser(proc) ≠ FileUser(parent)
+			∧ parent ↦ ProcUser(proc) ∉ dom(UserACL)
+			∧ (∃g · (g ∈ {ProcGroup(proc)} ∪ (UserGroups[{ProcUser(proc)}]))
+				∧ ((parent ↦ g ∈ dom(GroupACL) ∧ {GWRITE, GEXECUTE} ⊆ GroupACL(parent ↦ g)) ∨ (g = FileGroup(parent) ∧ parent ∈ dom(GroupObjACL) ∧ {GWRITE, GEXECUTE} ⊆ GroupObjACL(parent))))
+			∧ parent ∈ dom(MaskACL) ∧ {GWRITE, GEXECUTE} ⊆ MaskACL(parent))
+		∨ (ProcUser(proc) ≠ FileUser(parent)
+			∧ parent ∉ dom(MaskACL)
+			∧ (FileGroup(parent) = ProcGroup(proc) ∨ ProcUser(proc) ↦ FileGroup(parent) ∈ UserGroups)
+			∧ {GWRITE, GEXECUTE} ⊆ DACPermissions(parent))
+		∨ (ProcUser(proc) ≠ FileUser(parent)
+			∧ parent ∈ dom(MaskACL) ∧ MaskACL(parent) ≠ ∅
+			∧ parent ↦ ProcUser(proc) ∉ dom(UserACL)
+			∧ (∀g · (g ∈ {ProcGroup(proc)} ∪ (UserGroups[{ProcUser(proc)}])) ⇒ parent ↦ g ∉ dom(GroupACL))
+			∧ FileGroup(parent) ≠ ProcGroup(proc) ∧ ProcUser(proc) ↦ FileGroup(parent) ∉ UserGroups
+			∧ {OWRITE, OEXECUTE} ⊆ DACPermissions(parent))) // @depend[[FileGroup(parent)=ProcGroup(proc)]] является следствием условий [group=FileGroup(parent)] и [group=ProcGroup(proc)]
+        @grd13: perms = (mode ∪ (DACPermissions(parent) ∩ {SET_GID})) ∖ (mode ∩ ProcUmask(proc)) // @const SGID наследуется от родительской директории
+    then
+        @act1: Files ≔ Files ∪ {folder}
+        @act2: Folders ≔ Folders ∪ {folder}
+        @act3: FileParents ≔ FileParents ∪ {folder ↦ (parent ↦ name)}
+        @act4: PathToRoot(folder) ≔ PathToRoot(parent) ∪ {parent}
+        @act5: DACPermissions(folder) ≔ perms
+        @act6: FileUser(folder) ≔ ProcUser(proc)
+        @act7: FileGroup(folder) ≔ group
+        @act8: FileXattrs(folder) ≔ ∅
+        @act9: GroupObjACL ≔ GroupObjACL ∪ {folder ↦ perms ∩ GROUP_PERMISSIONS}
+    end
+
+    event chmod
+    any
+        proc
+        parent
+        file // -?
+        name
+        mode
+        perms // -
+    where
+        @grd1: proc ∈ Procs // @const
+        @grd2: file ↦ (parent ↦ name) ∈ FileParents // @const медиатор не рассчитан на несуществующий файл
+        @grd3: mode ⊆ PERMISSIONS // @const
+        @grd4: ProcUser(proc) = ROOT_USER ∨ ProcUser(proc) = FileUser(file)
+        @grd5: ∀f · f ∈ PathToRoot(parent) ∪ {parent} ∧ ProcUser(proc) ≠ ROOT_USER
+	⇒ ((ProcUser(proc) = FileUser(f)
+			∧ UEXECUTE ∈ DACPermissions(f))
+		∨ (ProcUser(proc) ≠ FileUser(f)
+			∧ (f ∉ dom(MaskACL) ∨ MaskACL(f) = ∅)
+			∧ FileGroup(f) ≠ ProcGroup(proc) ∧ ProcUser(proc) ↦ FileGroup(f) ∉ UserGroups
+			∧ OEXECUTE ∈ DACPermissions(f))
+		∨ (ProcUser(proc) ≠ FileUser(f)
+			∧ f ↦ ProcUser(proc) ∈ dom(UserACL) ∧ UEXECUTE ∈ UserACL(f ↦ ProcUser(proc))
+			∧ GEXECUTE ∈ MaskACL(f))
+		∨ (ProcUser(proc) ≠ FileUser(f)
+			∧ f ↦ ProcUser(proc) ∉ dom(UserACL)
+			∧ (∃g · (g ∈ {ProcGroup(proc)} ∪ (UserGroups[{ProcUser(proc)}]))
+				∧ ((f ↦ g ∈ dom(GroupACL) ∧ GEXECUTE ∈ GroupACL(f ↦ g)) ∨ (g = FileGroup(f) ∧ f ∈ dom(GroupObjACL) ∧ GEXECUTE ∈ GroupObjACL(f))))
+			∧ f ∈ dom(MaskACL) ∧ GEXECUTE ∈ MaskACL(f))
+		∨ (ProcUser(proc) ≠ FileUser(f)
+			∧ f ∉ dom(MaskACL)
+			∧ (FileGroup(f) = ProcGroup(proc) ∨ ProcUser(proc) ↦ FileGroup(f) ∈ UserGroups)
+			∧ GEXECUTE ∈ DACPermissions(f))
+		∨ (ProcUser(proc) ≠ FileUser(f)
+			∧ f ∈ dom(MaskACL) ∧ MaskACL(f) ≠ ∅
+			∧ f ↦ ProcUser(proc) ∉ dom(UserACL)
+			∧ (∀g · (g ∈ {ProcGroup(proc)} ∪ (UserGroups[{ProcUser(proc)}])) ⇒ f ↦ g ∉ dom(GroupACL))
+			∧ FileGroup(f) ≠ ProcGroup(proc) ∧ ProcUser(proc) ↦ FileGroup(f) ∉ UserGroups
+			∧ OEXECUTE ∈ DACPermissions(f)))
+        @grd6: ¬(file ∈ Folders ∨ ProcUser(proc) = ROOT_USER ∨ ProcUser(proc) ↦ FileGroup(file) ∈ UserGroups) ⇒ perms = mode ∖ {SET_GID}
+        @grd7: (file ∈ Folders ∨ ProcUser(proc) = ROOT_USER ∨ ProcUser(proc) ↦ FileGroup(file) ∈ UserGroups) ⇒ perms = mode
+    then
+        @act1: DACPermissions(file) ≔ perms
+        @act2: MaskACL :∣ (file ∈ dom(MaskACL) ∧ MaskACL' = ({file} ⩤ MaskACL) ∪ {file ↦ mode ∩ {GREAD, GWRITE, GEXECUTE}}) ∨ (file ∉ dom(MaskACL) ∧ MaskACL' = MaskACL)
+        @act3: GroupObjACL :∣ (file ∉ dom(MaskACL) ∧ GroupObjACL' = ({file} ⩤ GroupObjACL) ∪ {file ↦ mode ∩ {GREAD, GWRITE, GEXECUTE}}) ∨ (file ∈ dom(MaskACL) ∧ GroupObjACL' = GroupObjACL)
+    end
+
+    event fchmod
+    any
+        proc
+        fd
+        mode
+        perms // -
+    where
+        @grd1: proc ∈ Procs
+        @grd2: proc ↦ fd ∈ ProcFDs
+        @grd3: FDFile(fd) ∈ Files
+        @grd4: mode ⊆ PERMISSIONS
+        @grd5: ProcUser(proc) = ROOT_USER ∨ ProcUser(proc) = FileUser(FDFile(fd))
+        @grd6: ¬(FDFile(fd) ∈ Folders ∨ ProcUser(proc) = ROOT_USER ∨ ProcUser(proc) ↦ FileGroup(FDFile(fd)) ∈ UserGroups) ⇒ perms = mode ∖ {SET_GID}
+        @grd7: (FDFile(fd) ∈ Folders ∨ ProcUser(proc) = ROOT_USER ∨ ProcUser(proc) ↦ FileGroup(FDFile(fd)) ∈ UserGroups) ⇒ perms = mode
+    then
+        @act1: DACPermissions(FDFile(fd)) ≔ perms
+        @act2: MaskACL :∣ (FDFile(fd) ∈ dom(MaskACL) ∧ MaskACL' = ({FDFile(fd)} ⩤ MaskACL) ∪ {FDFile(fd) ↦ (mode ∩ {GREAD, GWRITE, GEXECUTE})}) ∨ (FDFile(fd) ∉ dom(MaskACL) ∧ MaskACL' = MaskACL)
+        @act3: GroupObjACL :∣ (FDFile(fd) ∉ dom(MaskACL) ∧ GroupObjACL' = ({FDFile(fd)} ⩤ GroupObjACL) ∪ {FDFile(fd) ↦ mode ∩ {GREAD, GWRITE, GEXECUTE}}) ∨ (FDFile(fd) ∈ dom(MaskACL) ∧ GroupObjACL' = GroupObjACL)
+    end
+
+    event fchmodat
+    any
+        proc
+        dirfd // can be AT_FDCWD
+        cwd // -
+        parent
+        file // -?
+        name
+        mode
+        perms // -
+    where
+        @grd1:  proc ∈ Procs
+        @grd2:  dirfd ∈ FILE_DESCRIPTORS_EXTENDED
+        @grd3:  cwd ∈ Folders
+        @grd4:  dirfd = AT_FDCWD ⇒ cwd = ProcCwd(proc)
+        @grd5:  dirfd ≠ AT_FDCWD ⇒ proc ↦ dirfd ∈ ProcFDs ∧ cwd = FDFile(dirfd)
+        @grd6:  file ↦ (parent ↦ name) ∈ FileParents
+        @grd7:  mode ⊆ PERMISSIONS
+        @grd8:  ∀f · f ∈ PathToRoot(parent) ∪ {parent} ∧ ProcUser(proc) ≠ ROOT_USER ∧ f ∉ PathToRoot(cwd)
+	⇒ ((ProcUser(proc) = FileUser(f)
+			∧ UEXECUTE ∈ DACPermissions(f))
+		∨ (ProcUser(proc) ≠ FileUser(f)
+			∧ (f ∉ dom(MaskACL) ∨ MaskACL(f) = ∅)
+			∧ FileGroup(f) ≠ ProcGroup(proc) ∧ ProcUser(proc) ↦ FileGroup(f) ∉ UserGroups
+			∧ OEXECUTE ∈ DACPermissions(f))
+		∨ (ProcUser(proc) ≠ FileUser(f)
+			∧ f ↦ ProcUser(proc) ∈ dom(UserACL) ∧ UEXECUTE ∈ UserACL(f ↦ ProcUser(proc))
+			∧ GEXECUTE ∈ MaskACL(f))
+		∨ (ProcUser(proc) ≠ FileUser(f)
+			∧ f ↦ ProcUser(proc) ∉ dom(UserACL)
+			∧ (∃g · (g ∈ {ProcGroup(proc)} ∪ (UserGroups[{ProcUser(proc)}]))
+				∧ ((f ↦ g ∈ dom(GroupACL) ∧ GEXECUTE ∈ GroupACL(f ↦ g)) ∨ (g = FileGroup(f) ∧ f ∈ dom(GroupObjACL) ∧ GEXECUTE ∈ GroupObjACL(f))))
+			∧ f ∈ dom(MaskACL) ∧ GEXECUTE ∈ MaskACL(f))
+		∨ (ProcUser(proc) ≠ FileUser(f)
+			∧ f ∉ dom(MaskACL)
+			∧ (FileGroup(f) = ProcGroup(proc) ∨ ProcUser(proc) ↦ FileGroup(f) ∈ UserGroups)
+			∧ GEXECUTE ∈ DACPermissions(f))
+		∨ (ProcUser(proc) ≠ FileUser(f)
+			∧ f ∈ dom(MaskACL) ∧ MaskACL(f) ≠ ∅
+			∧ f ↦ ProcUser(proc) ∉ dom(UserACL)
+			∧ (∀g · (g ∈ {ProcGroup(proc)} ∪ (UserGroups[{ProcUser(proc)}])) ⇒ f ↦ g ∉ dom(GroupACL))
+			∧ FileGroup(f) ≠ ProcGroup(proc) ∧ ProcUser(proc) ↦ FileGroup(f) ∉ UserGroups
+			∧ OEXECUTE ∈ DACPermissions(f)))
+        @grd9:  ProcUser(proc) = ROOT_USER ∨ ProcUser(proc) = FileUser(file)
+        @grd10: ¬(file ∈ Folders ∨ ProcUser(proc) = ROOT_USER ∨ ProcUser(proc) ↦ FileGroup(file) ∈ UserGroups) ⇒ perms = mode ∖ {SET_GID}
+        @grd11: (file ∈ Folders ∨ ProcUser(proc) = ROOT_USER ∨ ProcUser(proc) ↦ FileGroup(file) ∈ UserGroups) ⇒ perms = mode
+    then
+        @act1: DACPermissions(file) ≔ perms
+        @act2: MaskACL :∣ (file ∈ dom(MaskACL) ∧ MaskACL' = ({file} ⩤ MaskACL) ∪ {file ↦ (mode ∩ {GREAD, GWRITE, GEXECUTE})}) ∨ (file ∉ dom(MaskACL) ∧ MaskACL' = MaskACL)
+        @act3: GroupObjACL :∣ (file ∉ dom(MaskACL) ∧ GroupObjACL' = ({file} ⩤ GroupObjACL) ∪ {file ↦ mode ∩ {GREAD, GWRITE, GEXECUTE}}) ∨ (file ∈ dom(MaskACL) ∧ GroupObjACL' = GroupObjACL)
+    end
+
+    event chown
+    any
+        proc
+        parent
+        file // -?
+        name
+        owner
+        group
+        perms // -
+    where
+        @grd1:  proc ∈ Procs // @const
+        @grd2:  file ↦ (parent ↦ name) ∈ FileParents // @const медиатор не рассчитан на несуществующие файлы
+        @grd3:  owner ∈ Users // @const
+        @grd4:  group ∈ Groups // @const
+        @grd5:  ProcUser(proc) = ROOT_USER ∨ owner = ProcUser(proc)
+        @grd6:  ProcUser(proc) = ROOT_USER ∨ ProcUser(proc) ↦ group ∈ UserGroups
+        @grd7:  ∀f · f ∈ PathToRoot(parent) ∪ {parent} ∧ ProcUser(proc) ≠ ROOT_USER
+	⇒ ((ProcUser(proc) = FileUser(f)
+			∧ UEXECUTE ∈ DACPermissions(f))
+		∨ (ProcUser(proc) ≠ FileUser(f)
+			∧ (f ∉ dom(MaskACL) ∨ MaskACL(f) = ∅)
+			∧ FileGroup(f) ≠ ProcGroup(proc) ∧ ProcUser(proc) ↦ FileGroup(f) ∉ UserGroups
+			∧ OEXECUTE ∈ DACPermissions(f))
+		∨ (ProcUser(proc) ≠ FileUser(f)
+			∧ f ↦ ProcUser(proc) ∈ dom(UserACL) ∧ UEXECUTE ∈ UserACL(f ↦ ProcUser(proc))
+			∧ GEXECUTE ∈ MaskACL(f))
+		∨ (ProcUser(proc) ≠ FileUser(f)
+			∧ f ↦ ProcUser(proc) ∉ dom(UserACL)
+			∧ (∃g · (g ∈ {ProcGroup(proc)} ∪ (UserGroups[{ProcUser(proc)}]))
+				∧ ((f ↦ g ∈ dom(GroupACL) ∧ GEXECUTE ∈ GroupACL(f ↦ g)) ∨ (g = FileGroup(f) ∧ f ∈ dom(GroupObjACL) ∧ GEXECUTE ∈ GroupObjACL(f))))
+			∧ f ∈ dom(MaskACL) ∧ GEXECUTE ∈ MaskACL(f))
+		∨ (ProcUser(proc) ≠ FileUser(f)
+			∧ f ∉ dom(MaskACL)
+			∧ (FileGroup(f) = ProcGroup(proc) ∨ ProcUser(proc) ↦ FileGroup(f) ∈ UserGroups)
+			∧ GEXECUTE ∈ DACPermissions(f))
+		∨ (ProcUser(proc) ≠ FileUser(f)
+			∧ f ∈ dom(MaskACL) ∧ MaskACL(f) ≠ ∅
+			∧ f ↦ ProcUser(proc) ∉ dom(UserACL)
+			∧ (∀g · (g ∈ {ProcGroup(proc)} ∪ (UserGroups[{ProcUser(proc)}])) ⇒ f ↦ g ∉ dom(GroupACL))
+			∧ FileGroup(f) ≠ ProcGroup(proc) ∧ ProcUser(proc) ↦ FileGroup(f) ∉ UserGroups
+			∧ OEXECUTE ∈ DACPermissions(f)))
+        @grd8:  ProcUser(proc) = ROOT_USER ∨ ProcUser(proc) = FileUser(file)
+        @grd9:  file ∉ Folders ∧ GEXECUTE ∈ DACPermissions(file) ⇒ perms = DACPermissions(file) ∖ {SET_UID, SET_GID}
+        @grd10: file ∉ Folders ∧ GEXECUTE ∉ DACPermissions(file) ⇒ perms = DACPermissions(file) ∖ {SET_UID}
+        @grd11: file ∈ Folders ⇒ perms = DACPermissions(file)
+    then
+        @act1: FileUser(file) ≔ owner
+        @act2: FileGroup(file) ≔ group
+        @act3: DACPermissions(file) ≔ perms
+    end
+
+    event fchown
+    any
+        proc
+        fd
+        owner
+        group
+        perms // -
+    where
+        @grd1:  proc ∈ Procs
+        @grd2:  proc ↦ fd ∈ ProcFDs
+        @grd3:  FDFile(fd) ∈ Files
+        @grd4:  owner ∈ Users
+        @grd5:  group ∈ Groups
+        @grd6:  ProcUser(proc) = ROOT_USER ∨ owner = ProcUser(proc)
+        @grd7:  ProcUser(proc) = ROOT_USER ∨ ProcUser(proc) ↦ group ∈ UserGroups
+        @grd8:  ProcUser(proc) = ROOT_USER ∨ ProcUser(proc) = FileUser(FDFile(fd))
+        @grd9:  FDFile(fd) ∉ Folders ∧ GEXECUTE ∈ DACPermissions(FDFile(fd)) ⇒ perms = DACPermissions(FDFile(fd)) ∖ {SET_UID, SET_GID}
+        @grd10: FDFile(fd) ∉ Folders ∧ GEXECUTE ∉ DACPermissions(FDFile(fd)) ⇒ perms = DACPermissions(FDFile(fd)) ∖ {SET_UID}
+        @grd11: FDFile(fd) ∈ Folders ⇒ perms = DACPermissions(FDFile(fd))
+    then
+        @act1: FileUser(FDFile(fd)) ≔ owner
+        @act2: FileGroup(FDFile(fd)) ≔ group
+        @act3: DACPermissions(FDFile(fd)) ≔ perms
+    end
+
+    event fchownat
+    any
+        proc
+        dirfd // can be AT_FDCWD
+        cwd // -
+        parent
+        file // -?
+        name
+        owner
+        group
+        perms // -
+    where
+        @grd1:  proc ∈ Procs
+        @grd2:  dirfd ∈ FILE_DESCRIPTORS_EXTENDED
+        @grd3:  cwd ∈ Folders
+        @grd4:  dirfd = AT_FDCWD ⇒ cwd = ProcCwd(proc)
+        @grd5:  dirfd ≠ AT_FDCWD ⇒ proc ↦ dirfd ∈ ProcFDs ∧ cwd = FDFile(dirfd)
+        @grd6:  file ↦ (parent ↦ name) ∈ FileParents
+        @grd7:  owner ∈ Users
+        @grd8:  group ∈ Groups
+        @grd9:  ProcUser(proc) = ROOT_USER ∨ owner = ProcUser(proc)
+        @grd10: ProcUser(proc) = ROOT_USER ∨ ProcUser(proc) ↦ group ∈ UserGroups
+        @grd11: ∀f · f ∈ PathToRoot(parent) ∪ {parent} ∧ ProcUser(proc) ≠ ROOT_USER ∧ f ∉ PathToRoot(cwd)
+	⇒ ((ProcUser(proc) = FileUser(f)
+			∧ UEXECUTE ∈ DACPermissions(f))
+		∨ (ProcUser(proc) ≠ FileUser(f)
+			∧ (f ∉ dom(MaskACL) ∨ MaskACL(f) = ∅)
+			∧ FileGroup(f) ≠ ProcGroup(proc) ∧ ProcUser(proc) ↦ FileGroup(f) ∉ UserGroups
+			∧ OEXECUTE ∈ DACPermissions(f))
+		∨ (ProcUser(proc) ≠ FileUser(f)
+			∧ f ↦ ProcUser(proc) ∈ dom(UserACL) ∧ UEXECUTE ∈ UserACL(f ↦ ProcUser(proc))
+			∧ GEXECUTE ∈ MaskACL(f))
+		∨ (ProcUser(proc) ≠ FileUser(f)
+			∧ f ↦ ProcUser(proc) ∉ dom(UserACL)
+			∧ (∃g · (g ∈ {ProcGroup(proc)} ∪ (UserGroups[{ProcUser(proc)}]))
+				∧ ((f ↦ g ∈ dom(GroupACL) ∧ GEXECUTE ∈ GroupACL(f ↦ g)) ∨ (g = FileGroup(f) ∧ f ∈ dom(GroupObjACL) ∧ GEXECUTE ∈ GroupObjACL(f))))
+			∧ f ∈ dom(MaskACL) ∧ GEXECUTE ∈ MaskACL(f))
+		∨ (ProcUser(proc) ≠ FileUser(f)
+			∧ f ∉ dom(MaskACL)
+			∧ (FileGroup(f) = ProcGroup(proc) ∨ ProcUser(proc) ↦ FileGroup(f) ∈ UserGroups)
+			∧ GEXECUTE ∈ DACPermissions(f))
+		∨ (ProcUser(proc) ≠ FileUser(f)
+			∧ f ∈ dom(MaskACL) ∧ MaskACL(f) ≠ ∅
+			∧ f ↦ ProcUser(proc) ∉ dom(UserACL)
+			∧ (∀g · (g ∈ {ProcGroup(proc)} ∪ (UserGroups[{ProcUser(proc)}])) ⇒ f ↦ g ∉ dom(GroupACL))
+			∧ FileGroup(f) ≠ ProcGroup(proc) ∧ ProcUser(proc) ↦ FileGroup(f) ∉ UserGroups
+			∧ OEXECUTE ∈ DACPermissions(f)))
+        @grd12: ProcUser(proc) = ROOT_USER ∨ ProcUser(proc) = FileUser(file)
+        @grd13: file ∉ Folders ∧ GEXECUTE ∈ DACPermissions(file) ⇒ perms = DACPermissions(file) ∖ {SET_UID, SET_GID}
+        @grd14: file ∉ Folders ∧ GEXECUTE ∉ DACPermissions(file) ⇒ perms = DACPermissions(file) ∖ {SET_UID}
+        @grd15: file ∈ Folders ⇒ perms = DACPermissions(file)
+    then
+        @act1: FileUser(file) ≔ owner
+        @act2: FileGroup(file) ≔ group
+        @act3: DACPermissions(file) ≔ perms
+    end
+
+    event chdir
+    any
+        proc
+        dir
+    where
+        @grd1: proc ∈ Procs
+        @grd2: dir ∈ Folders
+        @grd3: ∀f · f ∈ PathToRoot(dir) ∪ {dir} ∧ ProcUser(proc) ≠ ROOT_USER
+	⇒ ((ProcUser(proc) = FileUser(f)
+			∧ UEXECUTE ∈ DACPermissions(f))
+		∨ (ProcUser(proc) ≠ FileUser(f)
+			∧ (f ∉ dom(MaskACL) ∨ MaskACL(f) = ∅)
+			∧ FileGroup(f) ≠ ProcGroup(proc) ∧ ProcUser(proc) ↦ FileGroup(f) ∉ UserGroups
+			∧ OEXECUTE ∈ DACPermissions(f))
+		∨ (ProcUser(proc) ≠ FileUser(f)
+			∧ f ↦ ProcUser(proc) ∈ dom(UserACL) ∧ UEXECUTE ∈ UserACL(f ↦ ProcUser(proc))
+			∧ GEXECUTE ∈ MaskACL(f))
+		∨ (ProcUser(proc) ≠ FileUser(f)
+			∧ f ↦ ProcUser(proc) ∉ dom(UserACL)
+			∧ (∃g · (g ∈ {ProcGroup(proc)} ∪ (UserGroups[{ProcUser(proc)}]))
+				∧ ((f ↦ g ∈ dom(GroupACL) ∧ GEXECUTE ∈ GroupACL(f ↦ g)) ∨ (g = FileGroup(f) ∧ f ∈ dom(GroupObjACL) ∧ GEXECUTE ∈ GroupObjACL(f))))
+			∧ f ∈ dom(MaskACL) ∧ GEXECUTE ∈ MaskACL(f))
+		∨ (ProcUser(proc) ≠ FileUser(f)
+			∧ f ∉ dom(MaskACL)
+			∧ (FileGroup(f) = ProcGroup(proc) ∨ ProcUser(proc) ↦ FileGroup(f) ∈ UserGroups)
+			∧ GEXECUTE ∈ DACPermissions(f))
+		∨ (ProcUser(proc) ≠ FileUser(f)
+			∧ f ∈ dom(MaskACL) ∧ MaskACL(f) ≠ ∅
+			∧ f ↦ ProcUser(proc) ∉ dom(UserACL)
+			∧ (∀g · (g ∈ {ProcGroup(proc)} ∪ (UserGroups[{ProcUser(proc)}])) ⇒ f ↦ g ∉ dom(GroupACL))
+			∧ FileGroup(f) ≠ ProcGroup(proc) ∧ ProcUser(proc) ↦ FileGroup(f) ∉ UserGroups
+			∧ OEXECUTE ∈ DACPermissions(f)))
+    then
+        @act1: ProcCwd(proc) ≔ dir
+    end
+
+    event fchdir
+    any
+        proc
+        fd
+    where
+        @grd1: proc ∈ Procs
+        @grd2: proc ↦ fd ∈ ProcFDs
+        @grd3: FDFile(fd) ∈ Folders
+        @grd4: ProcUser(proc) ≠ ROOT_USER
+	⇒ ((ProcUser(proc) = FileUser(FDFile(fd))
+			∧ UEXECUTE ∈ DACPermissions(FDFile(fd)))
+		∨ (ProcUser(proc) ≠ FileUser(FDFile(fd))
+			∧ (FDFile(fd) ∉ dom(MaskACL) ∨ MaskACL(FDFile(fd)) = ∅)
+			∧ FileGroup(FDFile(fd)) ≠ ProcGroup(proc) ∧ ProcUser(proc) ↦ FileGroup(FDFile(fd)) ∉ UserGroups
+			∧ OEXECUTE ∈ DACPermissions(FDFile(fd)))
+		∨ (ProcUser(proc) ≠ FileUser(FDFile(fd))
+			∧ FDFile(fd) ↦ ProcUser(proc) ∈ dom(UserACL) ∧ UEXECUTE ∈ UserACL(FDFile(fd) ↦ ProcUser(proc))
+			∧ GEXECUTE ∈ MaskACL(FDFile(fd)))
+		∨ (ProcUser(proc) ≠ FileUser(FDFile(fd))
+			∧ FDFile(fd) ↦ ProcUser(proc) ∉ dom(UserACL)
+			∧ (∃g · (g ∈ {ProcGroup(proc)} ∪ (UserGroups[{ProcUser(proc)}]))
+				∧ ((FDFile(fd) ↦ g ∈ dom(GroupACL) ∧ GEXECUTE ∈ GroupACL(FDFile(fd) ↦ g)) ∨ (g = FileGroup(FDFile(fd)) ∧ FDFile(fd) ∈ dom(GroupObjACL) ∧ GEXECUTE ∈ GroupObjACL(FDFile(fd)))))
+			∧ FDFile(fd) ∈ dom(MaskACL) ∧ GEXECUTE ∈ MaskACL(FDFile(fd)))
+		∨ (ProcUser(proc) ≠ FileUser(FDFile(fd))
+			∧ FDFile(fd) ∉ dom(MaskACL)
+			∧ (FileGroup(FDFile(fd)) = ProcGroup(proc) ∨ ProcUser(proc) ↦ FileGroup(FDFile(fd)) ∈ UserGroups)
+			∧ GEXECUTE ∈ DACPermissions(FDFile(fd)))
+		∨ (ProcUser(proc) ≠ FileUser(FDFile(fd))
+			∧ FDFile(fd) ∈ dom(MaskACL) ∧ MaskACL(FDFile(fd)) ≠ ∅
+			∧ FDFile(fd) ↦ ProcUser(proc) ∉ dom(UserACL)
+			∧ (∀g · (g ∈ {ProcGroup(proc)} ∪ (UserGroups[{ProcUser(proc)}])) ⇒ FDFile(fd) ↦ g ∉ dom(GroupACL))
+			∧ FileGroup(FDFile(fd)) ≠ ProcGroup(proc) ∧ ProcUser(proc) ↦ FileGroup(FDFile(fd)) ∉ UserGroups
+			∧ OEXECUTE ∈ DACPermissions(FDFile(fd))))
+    then
+        @act1: ProcCwd(proc) ≔ FDFile(fd)
+    end
+
+    event getdents
+    any
+        proc
+        fd
+    where
+        @grd1: proc ∈ Procs
+        @grd2: proc ↦ fd ∈ ProcFDs
+        @grd3: FDFile(fd) ∈ Folders
+    end
+
+    event getxattr
+    any
+        proc
+        parent
+        file // -?
+        fileName
+        name
+        value
+        size
+    where
+        @grd1: proc ∈ Procs // @const
+        @grd2: file ↦ (parent ↦ fileName) ∈ FileParents // @const медиатор не рассчитан на несуществующие файлы
+        @grd4: size ∈ ℕ // @const
+        @grd3: name ∈ dom(FileXattrs(file)) ∧ (size > 0 ⇒ value = FileXattrs(file)(name))
+        @grd5: ∀f · f ∈ PathToRoot(parent) ∪ {parent} ∧ ProcUser(proc) ≠ ROOT_USER
+	⇒ ((ProcUser(proc) = FileUser(f)
+			∧ UEXECUTE ∈ DACPermissions(f))
+		∨ (ProcUser(proc) ≠ FileUser(f)
+			∧ (f ∉ dom(MaskACL) ∨ MaskACL(f) = ∅)
+			∧ FileGroup(f) ≠ ProcGroup(proc) ∧ ProcUser(proc) ↦ FileGroup(f) ∉ UserGroups
+			∧ OEXECUTE ∈ DACPermissions(f))
+		∨ (ProcUser(proc) ≠ FileUser(f)
+			∧ f ↦ ProcUser(proc) ∈ dom(UserACL) ∧ UEXECUTE ∈ UserACL(f ↦ ProcUser(proc))
+			∧ GEXECUTE ∈ MaskACL(f))
+		∨ (ProcUser(proc) ≠ FileUser(f)
+			∧ f ↦ ProcUser(proc) ∉ dom(UserACL)
+			∧ (∃g · (g ∈ {ProcGroup(proc)} ∪ (UserGroups[{ProcUser(proc)}]))
+				∧ ((f ↦ g ∈ dom(GroupACL) ∧ GEXECUTE ∈ GroupACL(f ↦ g)) ∨ (g = FileGroup(f) ∧ f ∈ dom(GroupObjACL) ∧ GEXECUTE ∈ GroupObjACL(f))))
+			∧ f ∈ dom(MaskACL) ∧ GEXECUTE ∈ MaskACL(f))
+		∨ (ProcUser(proc) ≠ FileUser(f)
+			∧ f ∉ dom(MaskACL)
+			∧ (FileGroup(f) = ProcGroup(proc) ∨ ProcUser(proc) ↦ FileGroup(f) ∈ UserGroups)
+			∧ GEXECUTE ∈ DACPermissions(f))
+		∨ (ProcUser(proc) ≠ FileUser(f)
+			∧ f ∈ dom(MaskACL) ∧ MaskACL(f) ≠ ∅
+			∧ f ↦ ProcUser(proc) ∉ dom(UserACL)
+			∧ (∀g · (g ∈ {ProcGroup(proc)} ∪ (UserGroups[{ProcUser(proc)}])) ⇒ f ↦ g ∉ dom(GroupACL))
+			∧ FileGroup(f) ≠ ProcGroup(proc) ∧ ProcUser(proc) ↦ FileGroup(f) ∉ UserGroups
+			∧ OEXECUTE ∈ DACPermissions(f)))
+        @grd6: ProcUser(proc) ≠ ROOT_USER
+	⇒ ((ProcUser(proc) = FileUser(file)
+			∧ UREAD ∈ DACPermissions(file))
+		∨ (ProcUser(proc) ≠ FileUser(file)
+			∧ (file ∉ dom(MaskACL) ∨ MaskACL(file) = ∅)
+			∧ FileGroup(file) ≠ ProcGroup(proc) ∧ ProcUser(proc) ↦ FileGroup(file) ∉ UserGroups
+			∧ OREAD ∈ DACPermissions(file))
+		∨ (ProcUser(proc) ≠ FileUser(file)
+			∧ file ↦ ProcUser(proc) ∈ dom(UserACL) ∧ UREAD ∈ UserACL(file ↦ ProcUser(proc))
+			∧ GREAD ∈ MaskACL(file))
+		∨ (ProcUser(proc) ≠ FileUser(file)
+			∧ file ↦ ProcUser(proc) ∉ dom(UserACL)
+			∧ (∃g · (g ∈ {ProcGroup(proc)} ∪ (UserGroups[{ProcUser(proc)}]))
+				∧ ((file ↦ g ∈ dom(GroupACL) ∧ GREAD ∈ GroupACL(file ↦ g)) ∨ (g = FileGroup(file) ∧ file ∈ dom(GroupObjACL) ∧ GREAD ∈ GroupObjACL(file))))
+			∧ file ∈ dom(MaskACL) ∧ GREAD ∈ MaskACL(file))
+		∨ (ProcUser(proc) ≠ FileUser(file)
+			∧ file ∉ dom(MaskACL)
+			∧ (FileGroup(file) = ProcGroup(proc) ∨ ProcUser(proc) ↦ FileGroup(file) ∈ UserGroups)
+			∧ GREAD ∈ DACPermissions(file))
+		∨ (ProcUser(proc) ≠ FileUser(file)
+			∧ file ∈ dom(MaskACL) ∧ MaskACL(file) ≠ ∅
+			∧ file ↦ ProcUser(proc) ∉ dom(UserACL)
+			∧ (∀g · (g ∈ {ProcGroup(proc)} ∪ (UserGroups[{ProcUser(proc)}])) ⇒ file ↦ g ∉ dom(GroupACL))
+			∧ FileGroup(file) ≠ ProcGroup(proc) ∧ ProcUser(proc) ↦ FileGroup(file) ∉ UserGroups
+			∧ OREAD ∈ DACPermissions(file)))
+    end
+
+    event setxattr
+    any
+        proc
+        parent
+        file // -?
+        fileName
+        name
+        value
+        size
+        flags
+    where
+        @grd1: proc ∈ Procs // @const
+        @grd2: file ↦ (parent ↦ fileName) ∈ FileParents // @const медиатор не рассчитан на несуществующие файлы
+        @grd3: flags ⊆ XATTR_FLAGS // @const
+        @grd4: XATTR_CREATE ∈ flags ⇒ name ∉ dom(FileXattrs(file))
+        @grd5: XATTR_REPLACE ∈ flags ⇒ name ∈ dom(FileXattrs(file))
+        @grd6: value ∈ DATA // @const
+        @grd7: size ∈ ℕ // @const
+        @grd8: ∀f · f ∈ PathToRoot(parent) ∪ {parent} ∧ ProcUser(proc) ≠ ROOT_USER
+	⇒ ((ProcUser(proc) = FileUser(f)
+			∧ UEXECUTE ∈ DACPermissions(f))
+		∨ (ProcUser(proc) ≠ FileUser(f)
+			∧ (f ∉ dom(MaskACL) ∨ MaskACL(f) = ∅)
+			∧ FileGroup(f) ≠ ProcGroup(proc) ∧ ProcUser(proc) ↦ FileGroup(f) ∉ UserGroups
+			∧ OEXECUTE ∈ DACPermissions(f))
+		∨ (ProcUser(proc) ≠ FileUser(f)
+			∧ f ↦ ProcUser(proc) ∈ dom(UserACL) ∧ UEXECUTE ∈ UserACL(f ↦ ProcUser(proc))
+			∧ GEXECUTE ∈ MaskACL(f))
+		∨ (ProcUser(proc) ≠ FileUser(f)
+			∧ f ↦ ProcUser(proc) ∉ dom(UserACL)
+			∧ (∃g · (g ∈ {ProcGroup(proc)} ∪ (UserGroups[{ProcUser(proc)}]))
+				∧ ((f ↦ g ∈ dom(GroupACL) ∧ GEXECUTE ∈ GroupACL(f ↦ g)) ∨ (g = FileGroup(f) ∧ f ∈ dom(GroupObjACL) ∧ GEXECUTE ∈ GroupObjACL(f))))
+			∧ f ∈ dom(MaskACL) ∧ GEXECUTE ∈ MaskACL(f))
+		∨ (ProcUser(proc) ≠ FileUser(f)
+			∧ f ∉ dom(MaskACL)
+			∧ (FileGroup(f) = ProcGroup(proc) ∨ ProcUser(proc) ↦ FileGroup(f) ∈ UserGroups)
+			∧ GEXECUTE ∈ DACPermissions(f))
+		∨ (ProcUser(proc) ≠ FileUser(f)
+			∧ f ∈ dom(MaskACL) ∧ MaskACL(f) ≠ ∅
+			∧ f ↦ ProcUser(proc) ∉ dom(UserACL)
+			∧ (∀g · (g ∈ {ProcGroup(proc)} ∪ (UserGroups[{ProcUser(proc)}])) ⇒ f ↦ g ∉ dom(GroupACL))
+			∧ FileGroup(f) ≠ ProcGroup(proc) ∧ ProcUser(proc) ↦ FileGroup(f) ∉ UserGroups
+			∧ OEXECUTE ∈ DACPermissions(f)))
+        @grd9: ProcUser(proc) ≠ ROOT_USER
+	⇒ ((ProcUser(proc) = FileUser(file)
+			∧ UWRITE ∈ DACPermissions(file))
+		∨ (ProcUser(proc) ≠ FileUser(file)
+			∧ (file ∉ dom(MaskACL) ∨ MaskACL(file) = ∅)
+			∧ FileGroup(file) ≠ ProcGroup(proc) ∧ ProcUser(proc) ↦ FileGroup(file) ∉ UserGroups
+			∧ OWRITE ∈ DACPermissions(file))
+		∨ (ProcUser(proc) ≠ FileUser(file)
+			∧ file ↦ ProcUser(proc) ∈ dom(UserACL) ∧ UWRITE ∈ UserACL(file ↦ ProcUser(proc))
+			∧ GWRITE ∈ MaskACL(file))
+		∨ (ProcUser(proc) ≠ FileUser(file)
+			∧ file ↦ ProcUser(proc) ∉ dom(UserACL)
+			∧ (∃g · (g ∈ {ProcGroup(proc)} ∪ (UserGroups[{ProcUser(proc)}]))
+				∧ ((file ↦ g ∈ dom(GroupACL) ∧ GWRITE ∈ GroupACL(file ↦ g)) ∨ (g = FileGroup(file) ∧ file ∈ dom(GroupObjACL) ∧ GWRITE ∈ GroupObjACL(file))))
+			∧ file ∈ dom(MaskACL) ∧ GWRITE ∈ MaskACL(file))
+		∨ (ProcUser(proc) ≠ FileUser(file)
+			∧ file ∉ dom(MaskACL)
+			∧ (FileGroup(file) = ProcGroup(proc) ∨ ProcUser(proc) ↦ FileGroup(file) ∈ UserGroups)
+			∧ GWRITE ∈ DACPermissions(file))
+		∨ (ProcUser(proc) ≠ FileUser(file)
+			∧ file ∈ dom(MaskACL) ∧ MaskACL(file) ≠ ∅
+			∧ file ↦ ProcUser(proc) ∉ dom(UserACL)
+			∧ (∀g · (g ∈ {ProcGroup(proc)} ∪ (UserGroups[{ProcUser(proc)}])) ⇒ file ↦ g ∉ dom(GroupACL))
+			∧ FileGroup(file) ≠ ProcGroup(proc) ∧ ProcUser(proc) ↦ FileGroup(file) ∉ UserGroups
+			∧ OWRITE ∈ DACPermissions(file)))
+    then
+        @act1: FileXattrs(file) ≔ ({name} ⩤ FileXattrs(file)) ∪ {name ↦ value}
+    end
+
+    event link
+    any
+        proc
+        oldParent
+        newParent
+        file // -?
+        oldName
+        newName
+    where
+        @grd1:  proc ∈ Procs // @const
+        @grd2:  oldParent ∈ Folders
+        @grd3:  newParent ∈ Folders
+        @grd4:  file ∈ Files ∖ Folders // @const
+        @grd5:  file ↦ (oldParent ↦ oldName) ∈ FileParents // @const медиатор не рассчитан на несуществующие файлы
+        // @grd6:  ∀f · f ↦ (newParent ↦ newName) ∉ FileParents
+        @grd6:  (newParent ↦ newName) ∉ ran(FileParents)
+        @grd7:  ∀f · f ∈ PathToRoot(oldParent) ∪ {oldParent} ∧ ProcUser(proc) ≠ ROOT_USER
+	⇒ ((ProcUser(proc) = FileUser(f)
+			∧ UEXECUTE ∈ DACPermissions(f))
+		∨ (ProcUser(proc) ≠ FileUser(f)
+			∧ (f ∉ dom(MaskACL) ∨ MaskACL(f) = ∅)
+			∧ FileGroup(f) ≠ ProcGroup(proc) ∧ ProcUser(proc) ↦ FileGroup(f) ∉ UserGroups
+			∧ OEXECUTE ∈ DACPermissions(f))
+		∨ (ProcUser(proc) ≠ FileUser(f)
+			∧ f ↦ ProcUser(proc) ∈ dom(UserACL) ∧ UEXECUTE ∈ UserACL(f ↦ ProcUser(proc))
+			∧ GEXECUTE ∈ MaskACL(f))
+		∨ (ProcUser(proc) ≠ FileUser(f)
+			∧ f ↦ ProcUser(proc) ∉ dom(UserACL)
+			∧ (∃g · (g ∈ {ProcGroup(proc)} ∪ (UserGroups[{ProcUser(proc)}]))
+				∧ ((f ↦ g ∈ dom(GroupACL) ∧ GEXECUTE ∈ GroupACL(f ↦ g)) ∨ (g = FileGroup(f) ∧ f ∈ dom(GroupObjACL) ∧ GEXECUTE ∈ GroupObjACL(f))))
+			∧ f ∈ dom(MaskACL) ∧ GEXECUTE ∈ MaskACL(f))
+		∨ (ProcUser(proc) ≠ FileUser(f)
+			∧ f ∉ dom(MaskACL)
+			∧ (FileGroup(f) = ProcGroup(proc) ∨ ProcUser(proc) ↦ FileGroup(f) ∈ UserGroups)
+			∧ GEXECUTE ∈ DACPermissions(f))
+		∨ (ProcUser(proc) ≠ FileUser(f)
+			∧ f ∈ dom(MaskACL) ∧ MaskACL(f) ≠ ∅
+			∧ f ↦ ProcUser(proc) ∉ dom(UserACL)
+			∧ (∀g · (g ∈ {ProcGroup(proc)} ∪ (UserGroups[{ProcUser(proc)}])) ⇒ f ↦ g ∉ dom(GroupACL))
+			∧ FileGroup(f) ≠ ProcGroup(proc) ∧ ProcUser(proc) ↦ FileGroup(f) ∉ UserGroups
+			∧ OEXECUTE ∈ DACPermissions(f)))
+        @grd8:  ∀f · f ∈ PathToRoot(newParent) ∧ ProcUser(proc) ≠ ROOT_USER
+	⇒ ((ProcUser(proc) = FileUser(f)
+			∧ UEXECUTE ∈ DACPermissions(f))
+		∨ (ProcUser(proc) ≠ FileUser(f)
+			∧ (f ∉ dom(MaskACL) ∨ MaskACL(f) = ∅)
+			∧ FileGroup(f) ≠ ProcGroup(proc) ∧ ProcUser(proc) ↦ FileGroup(f) ∉ UserGroups
+			∧ OEXECUTE ∈ DACPermissions(f))
+		∨ (ProcUser(proc) ≠ FileUser(f)
+			∧ f ↦ ProcUser(proc) ∈ dom(UserACL) ∧ UEXECUTE ∈ UserACL(f ↦ ProcUser(proc))
+			∧ GEXECUTE ∈ MaskACL(f))
+		∨ (ProcUser(proc) ≠ FileUser(f)
+			∧ f ↦ ProcUser(proc) ∉ dom(UserACL)
+			∧ (∃g · (g ∈ {ProcGroup(proc)} ∪ (UserGroups[{ProcUser(proc)}]))
+				∧ ((f ↦ g ∈ dom(GroupACL) ∧ GEXECUTE ∈ GroupACL(f ↦ g)) ∨ (g = FileGroup(f) ∧ f ∈ dom(GroupObjACL) ∧ GEXECUTE ∈ GroupObjACL(f))))
+			∧ f ∈ dom(MaskACL) ∧ GEXECUTE ∈ MaskACL(f))
+		∨ (ProcUser(proc) ≠ FileUser(f)
+			∧ f ∉ dom(MaskACL)
+			∧ (FileGroup(f) = ProcGroup(proc) ∨ ProcUser(proc) ↦ FileGroup(f) ∈ UserGroups)
+			∧ GEXECUTE ∈ DACPermissions(f))
+		∨ (ProcUser(proc) ≠ FileUser(f)
+			∧ f ∈ dom(MaskACL) ∧ MaskACL(f) ≠ ∅
+			∧ f ↦ ProcUser(proc) ∉ dom(UserACL)
+			∧ (∀g · (g ∈ {ProcGroup(proc)} ∪ (UserGroups[{ProcUser(proc)}])) ⇒ f ↦ g ∉ dom(GroupACL))
+			∧ FileGroup(f) ≠ ProcGroup(proc) ∧ ProcUser(proc) ↦ FileGroup(f) ∉ UserGroups
+			∧ OEXECUTE ∈ DACPermissions(f)))
+        @grd9:  ProcUser(proc) ≠ ROOT_USER
+	⇒ ((ProcUser(proc) = FileUser(newParent)
+			∧ {UWRITE, UEXECUTE} ⊆ DACPermissions(newParent))
+		∨ (ProcUser(proc) ≠ FileUser(newParent)
+			∧ (newParent ∉ dom(MaskACL) ∨ MaskACL(newParent) = ∅)
+			∧ FileGroup(newParent) ≠ ProcGroup(proc) ∧ ProcUser(proc) ↦ FileGroup(newParent) ∉ UserGroups
+			∧ {OWRITE, OEXECUTE} ⊆ DACPermissions(newParent))
+		∨ (ProcUser(proc) ≠ FileUser(newParent)
+			∧ newParent ↦ ProcUser(proc) ∈ dom(UserACL) ∧ {UWRITE, UEXECUTE} ⊆ UserACL(newParent ↦ ProcUser(proc))
+			∧ {GWRITE, GEXECUTE} ⊆ MaskACL(newParent))
+		∨ (ProcUser(proc) ≠ FileUser(newParent)
+			∧ newParent ↦ ProcUser(proc) ∉ dom(UserACL)
+			∧ (∃g · (g ∈ {ProcGroup(proc)} ∪ (UserGroups[{ProcUser(proc)}]))
+				∧ ((newParent ↦ g ∈ dom(GroupACL) ∧ {GWRITE, GEXECUTE} ⊆ GroupACL(newParent ↦ g)) ∨ (g = FileGroup(newParent) ∧ newParent ∈ dom(GroupObjACL) ∧ {GWRITE, GEXECUTE} ⊆ GroupObjACL(newParent))))
+			∧ newParent ∈ dom(MaskACL) ∧ {GWRITE, GEXECUTE} ⊆ MaskACL(newParent))
+		∨ (ProcUser(proc) ≠ FileUser(newParent)
+			∧ newParent ∉ dom(MaskACL)
+			∧ (FileGroup(newParent) = ProcGroup(proc) ∨ ProcUser(proc) ↦ FileGroup(newParent) ∈ UserGroups)
+			∧ {GWRITE, GEXECUTE} ⊆ DACPermissions(newParent))
+		∨ (ProcUser(proc) ≠ FileUser(newParent)
+			∧ newParent ∈ dom(MaskACL) ∧ MaskACL(newParent) ≠ ∅
+			∧ newParent ↦ ProcUser(proc) ∉ dom(UserACL)
+			∧ (∀g · (g ∈ {ProcGroup(proc)} ∪ (UserGroups[{ProcUser(proc)}])) ⇒ newParent ↦ g ∉ dom(GroupACL))
+			∧ FileGroup(newParent) ≠ ProcGroup(proc) ∧ ProcUser(proc) ↦ FileGroup(newParent) ∉ UserGroups
+			∧ {OWRITE, OEXECUTE} ⊆ DACPermissions(newParent)))
+        @grd10: ProcUser(proc) ≠ FileUser(file)
+	⇒ ((ProcUser(proc) = FileUser(file)
+			∧ {UREAD, UWRITE} ⊆ DACPermissions(file))
+		∨ (ProcUser(proc) ≠ FileUser(file)
+			∧ (file ∉ dom(MaskACL) ∨ MaskACL(file) = ∅)
+			∧ FileGroup(file) ≠ ProcGroup(proc) ∧ ProcUser(proc) ↦ FileGroup(file) ∉ UserGroups
+			∧ {OREAD, OWRITE} ⊆ DACPermissions(file))
+		∨ (ProcUser(proc) ≠ FileUser(file)
+			∧ file ↦ ProcUser(proc) ∈ dom(UserACL) ∧ {UREAD, UWRITE} ⊆ UserACL(file ↦ ProcUser(proc))
+			∧ {GREAD, GWRITE} ⊆ MaskACL(file))
+		∨ (ProcUser(proc) ≠ FileUser(file)
+			∧ file ↦ ProcUser(proc) ∉ dom(UserACL)
+			∧ (∃g · (g ∈ {ProcGroup(proc)} ∪ (UserGroups[{ProcUser(proc)}]))
+				∧ ((file ↦ g ∈ dom(GroupACL) ∧ {GREAD, GWRITE} ⊆ GroupACL(file ↦ g)) ∨ (g = FileGroup(file) ∧ file ∈ dom(GroupObjACL) ∧ {GREAD, GWRITE} ⊆ GroupObjACL(file))))
+			∧ file ∈ dom(MaskACL) ∧ {GREAD, GWRITE} ⊆ MaskACL(file))
+		∨ (ProcUser(proc) ≠ FileUser(file)
+			∧ file ∉ dom(MaskACL)
+			∧ (FileGroup(file) = ProcGroup(proc) ∨ ProcUser(proc) ↦ FileGroup(file) ∈ UserGroups)
+			∧ {GREAD, GWRITE} ⊆ DACPermissions(file))
+		∨ (ProcUser(proc) ≠ FileUser(file)
+			∧ file ∈ dom(MaskACL) ∧ MaskACL(file) ≠ ∅
+			∧ file ↦ ProcUser(proc) ∉ dom(UserACL)
+			∧ (∀g · (g ∈ {ProcGroup(proc)} ∪ (UserGroups[{ProcUser(proc)}])) ⇒ file ↦ g ∉ dom(GroupACL))
+			∧ FileGroup(file) ≠ ProcGroup(proc) ∧ ProcUser(proc) ↦ FileGroup(file) ∉ UserGroups
+			∧ {OREAD, OWRITE} ⊆ DACPermissions(file))) // fs.protected_hardlinks=1
+    then
+        @act1: FileParents ≔ FileParents ∪ {file ↦ (newParent ↦ newName)}
+    end
+
+    event symlink // TODO: add basic symlink support to other syscalls
+    any
+        proc
+        target_parent
+        target_name
+        parent
+        file
+        name
+    where
+        @grd1: proc ∈ Procs
+        // @grd2: ∀f · f ↦ (parent ↦ name) ∉ FileParents
+        @grd2: (parent ↦ name) ∉ ran(FileParents)
+        @grd3: file ∈ ((FILES ∖ Files) ∖ ran(FDFile)) ∖ ran(ProcCwd)
+        @grd4: parent ∈ Folders
+        @grd5: target_parent ∈ FILES
+        @grd6: target_name ∈ STRINGS
+        @grd7: ∀f · f ∈ PathToRoot(parent) ∧ ProcUser(proc) ≠ ROOT_USER
+	⇒ ((ProcUser(proc) = FileUser(f)
+			∧ UEXECUTE ∈ DACPermissions(f))
+		∨ (ProcUser(proc) ≠ FileUser(f)
+			∧ (f ∉ dom(MaskACL) ∨ MaskACL(f) = ∅)
+			∧ FileGroup(f) ≠ ProcGroup(proc) ∧ ProcUser(proc) ↦ FileGroup(f) ∉ UserGroups
+			∧ OEXECUTE ∈ DACPermissions(f))
+		∨ (ProcUser(proc) ≠ FileUser(f)
+			∧ f ↦ ProcUser(proc) ∈ dom(UserACL) ∧ UEXECUTE ∈ UserACL(f ↦ ProcUser(proc))
+			∧ GEXECUTE ∈ MaskACL(f))
+		∨ (ProcUser(proc) ≠ FileUser(f)
+			∧ f ↦ ProcUser(proc) ∉ dom(UserACL)
+			∧ (∃g · (g ∈ {ProcGroup(proc)} ∪ (UserGroups[{ProcUser(proc)}]))
+				∧ ((f ↦ g ∈ dom(GroupACL) ∧ GEXECUTE ∈ GroupACL(f ↦ g)) ∨ (g = FileGroup(f) ∧ f ∈ dom(GroupObjACL) ∧ GEXECUTE ∈ GroupObjACL(f))))
+			∧ f ∈ dom(MaskACL) ∧ GEXECUTE ∈ MaskACL(f))
+		∨ (ProcUser(proc) ≠ FileUser(f)
+			∧ f ∉ dom(MaskACL)
+			∧ (FileGroup(f) = ProcGroup(proc) ∨ ProcUser(proc) ↦ FileGroup(f) ∈ UserGroups)
+			∧ GEXECUTE ∈ DACPermissions(f))
+		∨ (ProcUser(proc) ≠ FileUser(f)
+			∧ f ∈ dom(MaskACL) ∧ MaskACL(f) ≠ ∅
+			∧ f ↦ ProcUser(proc) ∉ dom(UserACL)
+			∧ (∀g · (g ∈ {ProcGroup(proc)} ∪ (UserGroups[{ProcUser(proc)}])) ⇒ f ↦ g ∉ dom(GroupACL))
+			∧ FileGroup(f) ≠ ProcGroup(proc) ∧ ProcUser(proc) ↦ FileGroup(f) ∉ UserGroups
+			∧ OEXECUTE ∈ DACPermissions(f)))
+        @grd8: ProcUser(proc) ≠ ROOT_USER
+	⇒ ((ProcUser(proc) = FileUser(parent)
+			∧ {UWRITE, UEXECUTE} ⊆ DACPermissions(parent))
+		∨ (ProcUser(proc) ≠ FileUser(parent)
+			∧ (parent ∉ dom(MaskACL) ∨ MaskACL(parent) = ∅)
+			∧ FileGroup(parent) ≠ ProcGroup(proc) ∧ ProcUser(proc) ↦ FileGroup(parent) ∉ UserGroups
+			∧ {OWRITE, OEXECUTE} ⊆ DACPermissions(parent))
+		∨ (ProcUser(proc) ≠ FileUser(parent)
+			∧ parent ↦ ProcUser(proc) ∈ dom(UserACL) ∧ {UWRITE, UEXECUTE} ⊆ UserACL(parent ↦ ProcUser(proc))
+			∧ {GWRITE, GEXECUTE} ⊆ MaskACL(parent))
+		∨ (ProcUser(proc) ≠ FileUser(parent)
+			∧ parent ↦ ProcUser(proc) ∉ dom(UserACL)
+			∧ (∃g · (g ∈ {ProcGroup(proc)} ∪ (UserGroups[{ProcUser(proc)}]))
+				∧ ((parent ↦ g ∈ dom(GroupACL) ∧ {GWRITE, GEXECUTE} ⊆ GroupACL(parent ↦ g)) ∨ (g = FileGroup(parent) ∧ parent ∈ dom(GroupObjACL) ∧ {GWRITE, GEXECUTE} ⊆ GroupObjACL(parent))))
+			∧ parent ∈ dom(MaskACL) ∧ {GWRITE, GEXECUTE} ⊆ MaskACL(parent))
+		∨ (ProcUser(proc) ≠ FileUser(parent)
+			∧ parent ∉ dom(MaskACL)
+			∧ (FileGroup(parent) = ProcGroup(proc) ∨ ProcUser(proc) ↦ FileGroup(parent) ∈ UserGroups)
+			∧ {GWRITE, GEXECUTE} ⊆ DACPermissions(parent))
+		∨ (ProcUser(proc) ≠ FileUser(parent)
+			∧ parent ∈ dom(MaskACL) ∧ MaskACL(parent) ≠ ∅
+			∧ parent ↦ ProcUser(proc) ∉ dom(UserACL)
+			∧ (∀g · (g ∈ {ProcGroup(proc)} ∪ (UserGroups[{ProcUser(proc)}])) ⇒ parent ↦ g ∉ dom(GroupACL))
+			∧ FileGroup(parent) ≠ ProcGroup(proc) ∧ ProcUser(proc) ↦ FileGroup(parent) ∉ UserGroups
+			∧ {OWRITE, OEXECUTE} ⊆ DACPermissions(parent)))
+        @grd9: card(Files) < MAX_FILES
+    then
+        @act1: Files ≔ Files ∪ {file}
+        @act2: DACPermissions(file) ≔ DEF_SYMLINK_PERMS
+        @act3: FileUser(file) ≔ ProcUser(proc)
+        @act4: FileGroup(file) ≔ ProcGroup(proc) // TODO: SET_GID?
+        @act5: SymLinks ≔ SymLinks ∪ {file}
+        @act6: FileParents ≔ FileParents ∪ {file ↦ (parent ↦ name)}
+        @act7: FileXattrs(file) ≔ ∅
+        @act8: FileLink(file) ≔ target_parent ↦ target_name
+        @act9: GroupObjACL ≔ GroupObjACL ∪ {file ↦ DEF_SYMLINK_PERMS ∩ GROUP_PERMISSIONS}
+    end
+
+    event execve // TODO: support #!interpreter
+    any
+        proc
+        parent
+        exeFile // -?
+        name
+        argv
+        envp
+        fds // - file descriptiors to close due to CLOEXEC
+    where
+        @grd1:  proc ∈ Procs // @const
+        @grd2:  parent ∈ Folders
+        @grd3:  exeFile ∈ Files ∖ Folders // @const
+        @grd4:  exeFile ↦ (parent ↦ name) ∈ FileParents
+        @grd5:  argv ∈ ℙ(STRINGS) // @const
+        @grd6:  envp ∈ ℙ(STRINGS) // @const
+        @grd7:  fds ⊆ FDs // @const
+        @grd8:  ∀fd · fd ∈ fds ⇒ proc ↦ fd ∈ ProcFDs ∧ O_CLOEXEC ∈ FDFlags(fd)
+        @grd9:  ∀f · f ∈ PathToRoot(parent) ∪ {parent} ∧ ProcUser(proc) ≠ ROOT_USER
+	⇒ ((ProcUser(proc) = FileUser(f)
+			∧ UEXECUTE ∈ DACPermissions(f))
+		∨ (ProcUser(proc) ≠ FileUser(f)
+			∧ (f ∉ dom(MaskACL) ∨ MaskACL(f) = ∅)
+			∧ FileGroup(f) ≠ ProcGroup(proc) ∧ ProcUser(proc) ↦ FileGroup(f) ∉ UserGroups
+			∧ OEXECUTE ∈ DACPermissions(f))
+		∨ (ProcUser(proc) ≠ FileUser(f)
+			∧ f ↦ ProcUser(proc) ∈ dom(UserACL) ∧ UEXECUTE ∈ UserACL(f ↦ ProcUser(proc))
+			∧ GEXECUTE ∈ MaskACL(f))
+		∨ (ProcUser(proc) ≠ FileUser(f)
+			∧ f ↦ ProcUser(proc) ∉ dom(UserACL)
+			∧ (∃g · (g ∈ {ProcGroup(proc)} ∪ (UserGroups[{ProcUser(proc)}]))
+				∧ ((f ↦ g ∈ dom(GroupACL) ∧ GEXECUTE ∈ GroupACL(f ↦ g)) ∨ (g = FileGroup(f) ∧ f ∈ dom(GroupObjACL) ∧ GEXECUTE ∈ GroupObjACL(f))))
+			∧ f ∈ dom(MaskACL) ∧ GEXECUTE ∈ MaskACL(f))
+		∨ (ProcUser(proc) ≠ FileUser(f)
+			∧ f ∉ dom(MaskACL)
+			∧ (FileGroup(f) = ProcGroup(proc) ∨ ProcUser(proc) ↦ FileGroup(f) ∈ UserGroups)
+			∧ GEXECUTE ∈ DACPermissions(f))
+		∨ (ProcUser(proc) ≠ FileUser(f)
+			∧ f ∈ dom(MaskACL) ∧ MaskACL(f) ≠ ∅
+			∧ f ↦ ProcUser(proc) ∉ dom(UserACL)
+			∧ (∀g · (g ∈ {ProcGroup(proc)} ∪ (UserGroups[{ProcUser(proc)}])) ⇒ f ↦ g ∉ dom(GroupACL))
+			∧ FileGroup(f) ≠ ProcGroup(proc) ∧ ProcUser(proc) ↦ FileGroup(f) ∉ UserGroups
+			∧ OEXECUTE ∈ DACPermissions(f)))
+        @grd10: ProcUser(proc) ≠ ROOT_USER
+	⇒ ((ProcUser(proc) = FileUser(exeFile)
+			∧ UEXECUTE ∈ DACPermissions(exeFile))
+		∨ (ProcUser(proc) ≠ FileUser(exeFile)
+			∧ (exeFile ∉ dom(MaskACL) ∨ MaskACL(exeFile) = ∅)
+			∧ FileGroup(exeFile) ≠ ProcGroup(proc) ∧ ProcUser(proc) ↦ FileGroup(exeFile) ∉ UserGroups
+			∧ OEXECUTE ∈ DACPermissions(exeFile))
+		∨ (ProcUser(proc) ≠ FileUser(exeFile)
+			∧ exeFile ↦ ProcUser(proc) ∈ dom(UserACL) ∧ UEXECUTE ∈ UserACL(exeFile ↦ ProcUser(proc))
+			∧ GEXECUTE ∈ MaskACL(exeFile))
+		∨ (ProcUser(proc) ≠ FileUser(exeFile)
+			∧ exeFile ↦ ProcUser(proc) ∉ dom(UserACL)
+			∧ (∃g · (g ∈ {ProcGroup(proc)} ∪ (UserGroups[{ProcUser(proc)}]))
+				∧ ((exeFile ↦ g ∈ dom(GroupACL) ∧ GEXECUTE ∈ GroupACL(exeFile ↦ g)) ∨ (g = FileGroup(exeFile) ∧ exeFile ∈ dom(GroupObjACL) ∧ GEXECUTE ∈ GroupObjACL(exeFile))))
+			∧ exeFile ∈ dom(MaskACL) ∧ GEXECUTE ∈ MaskACL(exeFile))
+		∨ (ProcUser(proc) ≠ FileUser(exeFile)
+			∧ exeFile ∉ dom(MaskACL)
+			∧ (FileGroup(exeFile) = ProcGroup(proc) ∨ ProcUser(proc) ↦ FileGroup(exeFile) ∈ UserGroups)
+			∧ GEXECUTE ∈ DACPermissions(exeFile))
+		∨ (ProcUser(proc) ≠ FileUser(exeFile)
+			∧ exeFile ∈ dom(MaskACL) ∧ MaskACL(exeFile) ≠ ∅
+			∧ exeFile ↦ ProcUser(proc) ∉ dom(UserACL)
+			∧ (∀g · (g ∈ {ProcGroup(proc)} ∪ (UserGroups[{ProcUser(proc)}])) ⇒ exeFile ↦ g ∉ dom(GroupACL))
+			∧ FileGroup(exeFile) ≠ ProcGroup(proc) ∧ ProcUser(proc) ↦ FileGroup(exeFile) ∉ UserGroups
+			∧ OEXECUTE ∈ DACPermissions(exeFile)))
+        @grd11: {UEXECUTE, GEXECUTE, OEXECUTE} ∩ DACPermissions(exeFile) ≠ ∅
+    then
+        @act1:  ProcEXE(proc) ≔ exeFile
+        @act2:  ProcArgv(proc) ≔ argv
+        @act3:  ProcEnvp(proc) ≔ envp
+        @act4:  ProcUser :∣ (SET_UID ∈ DACPermissions(exeFile) ∧ ProcUser' =  (({proc} ⩤ ProcUser) ∪ {proc ↦ FileUser(exeFile)}))
+	∨ (SET_UID ∉ DACPermissions(exeFile) ∧ ProcUser' = ProcUser) // TODO: support no_new_privs and nosuid
+        @act5:  ProcGroup :∣ (SET_GID ∈ DACPermissions(exeFile) ∧ ProcGroup' =  (({proc} ⩤ ProcGroup) ∪ {proc ↦ FileGroup(exeFile)}))
+	∨ (SET_GID ∉ DACPermissions(exeFile) ∧ ProcGroup' = ProcGroup)
+        @act6:  FDs ≔ FDs ∖ fds
+        @act7:  ProcFDs ≔ ProcFDs ⩥ fds
+        @act8:  FDFlags ≔ fds ⩤ FDFlags
+        @act9:  FDFile ≔ fds ⩤ FDFile
+        @act10: FDNumber ≔ fds ⩤ FDNumber
+    end
+
+    event umask
+    any
+        proc
+        mask
+    where
+        @grd1: proc ∈ Procs
+        @grd2: mask ⊆ PERMISSIONS ∖ FILE_MODES
+    then
+        @act1: ProcUmask(proc) ≔ mask
+    end
+
+    event exit
+    any
+        proc
+        fds // -
+    where
+        @grd1: proc ∈ Procs ∖ {INIT}
+        @grd2: fds ⊆ ProcFDs[{proc}]
+        @grd3: ∀fd, p · fd ∈ fds ∧ p ∈ Procs ∖ {proc} ⇒ p ↦ fd ∉ ProcFDs
+    then
+        @act1:  Procs ≔ Procs ∖ {proc}
+        @act2:  ProcUser ≔ {proc} ⩤ ProcUser
+        @act3:  ProcGroup ≔ {proc} ⩤ ProcGroup
+        @act4:  ProcUmask ≔ {proc} ⩤ ProcUmask
+        @act5:  ProcEXE ≔ {proc} ⩤ ProcEXE
+        @act6:  ProcArgv ≔ {proc} ⩤ ProcArgv
+        @act7:  ProcEnvp ≔ {proc} ⩤ ProcEnvp
+        @act8:  ProcFDs ≔ {proc} ⩤ ProcFDs
+        @act9:  ProcCwd ≔ {proc} ⩤ ProcCwd
+        // @act10: ProcParent ≔ {x ↦ y ∣ x ∈ Procs ∖ {INIT, proc} ∧ ((ProcParent(x) ≠ proc ∧ y = ProcParent(x)) ∨ (ProcParent(x) = proc ∧ y = INIT))}
+        // @act10: ProcParent ≔ {x ↦ y ∣ x ∈ Procs ∖ {INIT, proc} ∧ (y ∈ {ProcParent(x), INIT}) ∧ ((ProcParent(x) ≠ proc ∧ y = ProcParent(x)) ∨ (ProcParent(x) = proc ∧ y = INIT))} // вариант Ани
+        @act10: ProcParent ≔ ({proc} ⩤ ProcParent) ∪ (dom({proc} ◁ ProcParent) × {INIT})
+        @act11: FDs ≔ FDs ∖ fds
+        @act12: FDFlags ≔ fds ⩤ FDFlags
+        @act13: FDFile ≔ fds ⩤ FDFile
+        @act14: FDNumber ≔ fds ⩤ FDNumber
+    end
+
+    event close
+    any
+        proc
+        fd
+        fds // -
+    where
+        @grd1: proc ∈ Procs
+        @grd2: proc ↦ fd ∈ ProcFDs
+        @grd3: fds ⊆ FDs
+        @grd4: (∃p · p ∈ Procs ∖ {proc} ∧ p ↦ fd ∈ ProcFDs) ⇔ fds = ∅
+        @grd5: (∀p · p ∈ Procs ∖ {proc} ⇒ p ↦ fd ∉ ProcFDs) ⇔ fds = {fd}
+    then
+        @act1: FDs ≔ FDs ∖ fds
+        @act2: ProcFDs ≔ ProcFDs ⩥ fds
+        @act3: FDFlags ≔ fds ⩤ FDFlags
+        @act4: FDFile ≔ fds ⩤ FDFile
+        @act5: FDNumber ≔ fds ⩤ FDNumber
+    end
+
+    event unlink
+    any
+        // Коммент // - обозначает (но это не учитывается, просто как документация) параметр, который не является параметром сисколла: "локальная переменная", выводимый параметр. Тут files -- мн-во удаляемых инод
+        proc
+        parent
+        file // -
+        name
+        files // -
+    where
+        @grd1:  proc ∈ Procs // @const
+        @grd2:  parent ∈ Folders
+        @grd3:  file ∈ Files ∖ Folders // @const
+        @grd4:  file ↦ (parent ↦ name) ∈ FileParents
+        @grd5:  files ⊆ Files // @const
+        // @grd6:  (∃p, n · p ∈ Folders ∧ (n ≠ name ∨ p ≠ parent) ∧ file ↦ (p ↦ n) ∈ FileParents) ⇔ files = ∅ // @depend[[∃p,n·p∈Folders∧(n ≠ name∨p≠parent)∧file ↦ (p ↦ n)∈FileParents]] @depend[[files=∅]] т.к. между ними эквивалентность
+        @grd6:  (∃p, n · (p ↦ n ∈ FileParents[{file}]) ∧ (n ≠ name ∨ p ≠ parent)) ⇔ files = ∅ // @depend[[∃p,n·p∈Folders∧(n ≠ name∨p≠parent)∧file ↦ (p ↦ n)∈FileParents]] @depend[[files=∅]] т.к. между ними эквивалентность
+        // @grd7:  (∀p, n · p ∈ Folders ∧ (n ≠ name ∨ p ≠ parent) ⇒ file ↦ (p ↦ n) ∉ FileParents) ⇔ files = {file} // @depend[[∀p,n·p∈Folders∧(n≠name∨p≠parent)⇒file ↦ (p ↦ n)∉ FileParents]] @depend[[files={file}]] т.к. между ними эквивалентность
+        // @grd7:  (∀p, n · (p ↦ n ∈ FileParents[{file}]) ⇒ (n = name ∧ p = parent)) ⇔ files = {file} // @depend[[∀p,n·p∈Folders∧(n≠name∨p≠parent)⇒file ↦ (p ↦ n)∉ FileParents]] @depend[[files={file}]] т.к. между ними эквивалентность // Мой вариант
+        @grd7:  ¬(∃p, n · (p ↦ n ∈ FileParents[{file}]) ∧ (n ≠ name ∨ p ≠ parent)) ⇔ files = {file} // @depend[[∀p,n·p∈Folders∧(n≠name∨p≠parent)⇒file ↦ (p ↦ n)∉ FileParents]] @depend[[files={file}]] т.к. между ними эквивалентность
+        @grd8:  ∀f · f ∈ PathToRoot(parent) ∧ ProcUser(proc) ≠ ROOT_USER
+	⇒ ((ProcUser(proc) = FileUser(f)
+			∧ UEXECUTE ∈ DACPermissions(f))
+		∨ (ProcUser(proc) ≠ FileUser(f)
+			∧ (f ∉ dom(MaskACL) ∨ MaskACL(f) = ∅)
+			∧ FileGroup(f) ≠ ProcGroup(proc) ∧ ProcUser(proc) ↦ FileGroup(f) ∉ UserGroups
+			∧ OEXECUTE ∈ DACPermissions(f))
+		∨ (ProcUser(proc) ≠ FileUser(f)
+			∧ f ↦ ProcUser(proc) ∈ dom(UserACL) ∧ UEXECUTE ∈ UserACL(f ↦ ProcUser(proc))
+			∧ GEXECUTE ∈ MaskACL(f))
+		∨ (ProcUser(proc) ≠ FileUser(f)
+			∧ f ↦ ProcUser(proc) ∉ dom(UserACL)
+			∧ (∃g · (g ∈ {ProcGroup(proc)} ∪ (UserGroups[{ProcUser(proc)}]))
+				∧ ((f ↦ g ∈ dom(GroupACL) ∧ GEXECUTE ∈ GroupACL(f ↦ g)) ∨ (g = FileGroup(f) ∧ f ∈ dom(GroupObjACL) ∧ GEXECUTE ∈ GroupObjACL(f))))
+			∧ f ∈ dom(MaskACL) ∧ GEXECUTE ∈ MaskACL(f))
+		∨ (ProcUser(proc) ≠ FileUser(f)
+			∧ f ∉ dom(MaskACL)
+			∧ (FileGroup(f) = ProcGroup(proc) ∨ ProcUser(proc) ↦ FileGroup(f) ∈ UserGroups)
+			∧ GEXECUTE ∈ DACPermissions(f))
+		∨ (ProcUser(proc) ≠ FileUser(f)
+			∧ f ∈ dom(MaskACL) ∧ MaskACL(f) ≠ ∅
+			∧ f ↦ ProcUser(proc) ∉ dom(UserACL)
+			∧ (∀g · (g ∈ {ProcGroup(proc)} ∪ (UserGroups[{ProcUser(proc)}])) ⇒ f ↦ g ∉ dom(GroupACL))
+			∧ FileGroup(f) ≠ ProcGroup(proc) ∧ ProcUser(proc) ↦ FileGroup(f) ∉ UserGroups
+			∧ OEXECUTE ∈ DACPermissions(f)))
+        @grd9:  ProcUser(proc) ≠ ROOT_USER
+	⇒ ((ProcUser(proc) = FileUser(parent)
+			∧ {UWRITE, UEXECUTE} ⊆ DACPermissions(parent))
+		∨ (ProcUser(proc) ≠ FileUser(parent)
+			∧ (parent ∉ dom(MaskACL) ∨ MaskACL(parent) = ∅)
+			∧ FileGroup(parent) ≠ ProcGroup(proc) ∧ ProcUser(proc) ↦ FileGroup(parent) ∉ UserGroups
+			∧ {OWRITE, OEXECUTE} ⊆ DACPermissions(parent))
+		∨ (ProcUser(proc) ≠ FileUser(parent)
+			∧ parent ↦ ProcUser(proc) ∈ dom(UserACL) ∧ {UWRITE, UEXECUTE} ⊆ UserACL(parent ↦ ProcUser(proc))
+			∧ {GWRITE, GEXECUTE} ⊆ MaskACL(parent))
+		∨ (ProcUser(proc) ≠ FileUser(parent)
+			∧ parent ↦ ProcUser(proc) ∉ dom(UserACL)
+			∧ (∃g · (g ∈ {ProcGroup(proc)} ∪ (UserGroups[{ProcUser(proc)}]))
+				∧ ((parent ↦ g ∈ dom(GroupACL) ∧ {GWRITE, GEXECUTE} ⊆ GroupACL(parent ↦ g)) ∨ (g = FileGroup(parent) ∧ parent ∈ dom(GroupObjACL) ∧ {GWRITE, GEXECUTE} ⊆ GroupObjACL(parent))))
+			∧ parent ∈ dom(MaskACL) ∧ {GWRITE, GEXECUTE} ⊆ MaskACL(parent))
+		∨ (ProcUser(proc) ≠ FileUser(parent)
+			∧ parent ∉ dom(MaskACL)
+			∧ (FileGroup(parent) = ProcGroup(proc) ∨ ProcUser(proc) ↦ FileGroup(parent) ∈ UserGroups)
+			∧ {GWRITE, GEXECUTE} ⊆ DACPermissions(parent))
+		∨ (ProcUser(proc) ≠ FileUser(parent)
+			∧ parent ∈ dom(MaskACL) ∧ MaskACL(parent) ≠ ∅
+			∧ parent ↦ ProcUser(proc) ∉ dom(UserACL)
+			∧ (∀g · (g ∈ {ProcGroup(proc)} ∪ (UserGroups[{ProcUser(proc)}])) ⇒ parent ↦ g ∉ dom(GroupACL))
+			∧ FileGroup(parent) ≠ ProcGroup(proc) ∧ ProcUser(proc) ↦ FileGroup(parent) ∉ UserGroups
+			∧ {OWRITE, OEXECUTE} ⊆ DACPermissions(parent)))
+        @grd10: STICKY_BIT ∈ DACPermissions(parent) ⇒ ProcUser(proc) ∈ {ROOT_USER, FileUser(file), FileUser(parent)}
+    then
+        @act1:  Files ≔ Files ∖ files
+        @act2:  FileParents ≔ FileParents ∖ {file ↦ (parent ↦ name)}
+        @act3:  DACPermissions ≔ files ⩤ DACPermissions
+        @act4:  FileUser ≔ files ⩤ FileUser
+        @act5:  FileGroup ≔ files ⩤ FileGroup
+        @act6:  FileXattrs ≔ files ⩤ FileXattrs
+        @act7:  UserACL ≔ (files × Users) ⩤ UserACL
+        @act8:  GroupACL ≔ (files × Groups) ⩤ GroupACL
+        @act9:  MaskACL ≔ files ⩤ MaskACL
+        @act10: GroupObjACL ≔ files ⩤ GroupObjACL
+        @act11: SymLinks ≔ SymLinks ∖ files
+        @act12: FileLink ≔ files ⩤ FileLink
+    end
+
+    event rmdir
+    any
+        proc
+        parent
+        folder // -
+        name
+    where
+        @grd1: proc ∈ Procs // @const
+        @grd2: parent ∈ Folders
+        @grd3: folder ∈ Folders ∖ {ROOT} // @const
+        @grd4: folder ↦ (parent ↦ name) ∈ FileParents
+        @grd5: ∀f · f ∈ Files ⇒ folder ∉ dom(FileParents[{f}])
+        @grd6: ∀f · f ∈ PathToRoot(parent) ∧ ProcUser(proc) ≠ ROOT_USER
+	⇒ ((ProcUser(proc) = FileUser(f)
+			∧ UEXECUTE ∈ DACPermissions(f))
+		∨ (ProcUser(proc) ≠ FileUser(f)
+			∧ (f ∉ dom(MaskACL) ∨ MaskACL(f) = ∅)
+			∧ FileGroup(f) ≠ ProcGroup(proc) ∧ ProcUser(proc) ↦ FileGroup(f) ∉ UserGroups
+			∧ OEXECUTE ∈ DACPermissions(f))
+		∨ (ProcUser(proc) ≠ FileUser(f)
+			∧ f ↦ ProcUser(proc) ∈ dom(UserACL) ∧ UEXECUTE ∈ UserACL(f ↦ ProcUser(proc))
+			∧ GEXECUTE ∈ MaskACL(f))
+		∨ (ProcUser(proc) ≠ FileUser(f)
+			∧ f ↦ ProcUser(proc) ∉ dom(UserACL)
+			∧ (∃g · (g ∈ {ProcGroup(proc)} ∪ (UserGroups[{ProcUser(proc)}]))
+				∧ ((f ↦ g ∈ dom(GroupACL) ∧ GEXECUTE ∈ GroupACL(f ↦ g)) ∨ (g = FileGroup(f) ∧ f ∈ dom(GroupObjACL) ∧ GEXECUTE ∈ GroupObjACL(f))))
+			∧ f ∈ dom(MaskACL) ∧ GEXECUTE ∈ MaskACL(f))
+		∨ (ProcUser(proc) ≠ FileUser(f)
+			∧ f ∉ dom(MaskACL)
+			∧ (FileGroup(f) = ProcGroup(proc) ∨ ProcUser(proc) ↦ FileGroup(f) ∈ UserGroups)
+			∧ GEXECUTE ∈ DACPermissions(f))
+		∨ (ProcUser(proc) ≠ FileUser(f)
+			∧ f ∈ dom(MaskACL) ∧ MaskACL(f) ≠ ∅
+			∧ f ↦ ProcUser(proc) ∉ dom(UserACL)
+			∧ (∀g · (g ∈ {ProcGroup(proc)} ∪ (UserGroups[{ProcUser(proc)}])) ⇒ f ↦ g ∉ dom(GroupACL))
+			∧ FileGroup(f) ≠ ProcGroup(proc) ∧ ProcUser(proc) ↦ FileGroup(f) ∉ UserGroups
+			∧ OEXECUTE ∈ DACPermissions(f)))
+        @grd7: ProcUser(proc) ≠ ROOT_USER
+	⇒ ((ProcUser(proc) = FileUser(parent)
+			∧ {UWRITE, UEXECUTE} ⊆ DACPermissions(parent))
+		∨ (ProcUser(proc) ≠ FileUser(parent)
+			∧ (parent ∉ dom(MaskACL) ∨ MaskACL(parent) = ∅)
+			∧ FileGroup(parent) ≠ ProcGroup(proc) ∧ ProcUser(proc) ↦ FileGroup(parent) ∉ UserGroups
+			∧ {OWRITE, OEXECUTE} ⊆ DACPermissions(parent))
+		∨ (ProcUser(proc) ≠ FileUser(parent)
+			∧ parent ↦ ProcUser(proc) ∈ dom(UserACL) ∧ {UWRITE, UEXECUTE} ⊆ UserACL(parent ↦ ProcUser(proc))
+			∧ {GWRITE, GEXECUTE} ⊆ MaskACL(parent))
+		∨ (ProcUser(proc) ≠ FileUser(parent)
+			∧ parent ↦ ProcUser(proc) ∉ dom(UserACL)
+			∧ (∃g · (g ∈ {ProcGroup(proc)} ∪ (UserGroups[{ProcUser(proc)}]))
+				∧ ((parent ↦ g ∈ dom(GroupACL) ∧ {GWRITE, GEXECUTE} ⊆ GroupACL(parent ↦ g)) ∨ (g = FileGroup(parent) ∧ parent ∈ dom(GroupObjACL) ∧ {GWRITE, GEXECUTE} ⊆ GroupObjACL(parent))))
+			∧ parent ∈ dom(MaskACL) ∧ {GWRITE, GEXECUTE} ⊆ MaskACL(parent))
+		∨ (ProcUser(proc) ≠ FileUser(parent)
+			∧ parent ∉ dom(MaskACL)
+			∧ (FileGroup(parent) = ProcGroup(proc) ∨ ProcUser(proc) ↦ FileGroup(parent) ∈ UserGroups)
+			∧ {GWRITE, GEXECUTE} ⊆ DACPermissions(parent))
+		∨ (ProcUser(proc) ≠ FileUser(parent)
+			∧ parent ∈ dom(MaskACL) ∧ MaskACL(parent) ≠ ∅
+			∧ parent ↦ ProcUser(proc) ∉ dom(UserACL)
+			∧ (∀g · (g ∈ {ProcGroup(proc)} ∪ (UserGroups[{ProcUser(proc)}])) ⇒ parent ↦ g ∉ dom(GroupACL))
+			∧ FileGroup(parent) ≠ ProcGroup(proc) ∧ ProcUser(proc) ↦ FileGroup(parent) ∉ UserGroups
+			∧ {OWRITE, OEXECUTE} ⊆ DACPermissions(parent)))
+        @grd8: STICKY_BIT ∈ DACPermissions(parent) ⇒ ProcUser(proc) ∈ {ROOT_USER, FileUser(folder), FileUser(parent)}
+    then
+        @act1:  Files ≔ Files ∖ {folder}
+        @act2:  FileParents ≔ FileParents ∖ {folder ↦ (parent ↦ name)}
+        @act3:  Folders ≔ Folders ∖ {folder}
+        @act4:  DACPermissions ≔ {folder} ⩤ DACPermissions
+        @act5:  FileUser ≔ {folder} ⩤ FileUser
+        @act6:  FileGroup ≔ {folder} ⩤ FileGroup
+        @act7:  FileXattrs ≔ {folder} ⩤ FileXattrs
+        @act8:  UserACL ≔ ({folder} × Users) ⩤ UserACL
+        @act9:  GroupACL ≔ ({folder} × Groups) ⩤ GroupACL
+        @act10: MaskACL ≔ {folder} ⩤ MaskACL
+        @act11: PathToRoot ≔ {folder} ⩤ PathToRoot
+        @act12: GroupObjACL ≔ {folder} ⩤ GroupObjACL
+    end
+
+    event fork
+    any
+        proc
+        newProc // -
+    where
+        @grd1: proc ∈ Procs
+        @grd2: newProc ∈ PROCS ∖ Procs
+    then
+        @act1:  Procs ≔ Procs ∪ {newProc}
+        @act2:  ProcUser(newProc) ≔ ProcUser(proc)
+        @act3:  ProcGroup(newProc) ≔ ProcGroup(proc)
+        @act4:  ProcUmask(newProc) ≔ ProcUmask(proc)
+        @act5:  ProcEXE(newProc) ≔ ProcEXE(proc)
+        @act6:  ProcArgv(newProc) ≔ ProcArgv(proc)
+        @act7:  ProcEnvp(newProc) ≔ ProcEnvp(proc)
+        @act8:  ProcFDs ≔ ProcFDs ∪ ({newProc} × ProcFDs[{proc}])
+        @act9:  ProcCwd(newProc) ≔ ProcCwd(proc)
+        @act10: ProcParent(newProc) ≔ proc
+    end
+
+    event create_user
+    any
+        user
+        groups
+        caps
+    where
+        @grd1: user ∈ USERS ∖ Users
+        @grd2: groups ⊆ Groups
+        @grd3: caps ⊆ CAPABILITIES
+    then
+        @act1: Users ≔ Users ∪ {user}
+        @act2: UserGroups ≔ UserGroups ∪ ({user} × groups)
+        @act3: UserCaps(user) ≔ caps
+    end
+
+    event create_group
+    any
+        group
+    where
+        @grd1: group ∈ GROUPS ∖ Groups
+    then
+        @act1: Groups ≔ Groups ∪ {group}
+    end
+
+    event login // create first user process
+    any
+        user
+        proc
+        group
+        exeFile
+        argv // -
+        envp // -
+        umask
+    where
+        @grd1: user ∈ Users
+        @grd2: proc ∈ PROCS ∖ Procs
+        @grd3: group ∈ Groups
+        @grd4: exeFile ∈ Files ∖ Folders
+        @grd5: argv ∈ ℙ(STRINGS)
+        @grd6: envp ∈ ℙ(STRINGS)
+        @grd7: umask ⊆ PERMISSIONS ∖ FILE_MODES
+    then
+        @act1: Procs ≔ Procs ∪ {proc}
+        @act2: ProcUser(proc) ≔ user
+        @act3: ProcGroup(proc) ≔ group
+        @act4: ProcUmask(proc) ≔ umask
+        @act5: ProcEXE(proc) ≔ exeFile
+        @act6: ProcArgv(proc) ≔ argv
+        @act7: ProcEnvp(proc) ≔ envp
+        @act8: ProcCwd(proc) ≔ ROOT
+        @act9: ProcParent(proc) ≔ INIT
+    end
+
+    event set_acl
+    any
+        userACL
+        groupACL
+        groupObjACL
+        maskACL
+        dacPermissions
+    where
+        @grd1: userACL ∈ (Files × Users) ⇸ ℙ(USER_PERMISSIONS)
+        @grd2: groupACL ∈ (Files × Groups) ⇸ ℙ(GROUP_PERMISSIONS)
+        @grd3: groupObjACL ∈ Files ⇸ ℙ(GROUP_PERMISSIONS)
+        @grd4: maskACL ∈ Files ⇸ ℙ(GROUP_PERMISSIONS)
+        @grd5: dacPermissions ∈ Files → ℙ(PERMISSIONS)
+        @grd6: ∀f, u · f ↦ u ∈ dom(userACL) ⇒ f ∈ dom(maskACL)
+        @grd7: ∀f, g · f ↦ g ∈ dom(groupACL) ⇒ f ∈ dom(maskACL)
+        @grd8: ∀f · f ∈ dom(maskACL) ⇒ maskACL(f) = dacPermissions(f) ∩ GROUP_PERMISSIONS
+        @grd9: ∀f · f ∈ Files ∧ f ∉ dom(maskACL) ⇒ f ∈ dom(groupObjACL) ∧ groupObjACL(f) = dacPermissions(f) ∩ GROUP_PERMISSIONS
+    then
+        @act1: UserACL ≔ userACL
+        @act2: GroupACL ≔ groupACL
+        @act3: GroupObjACL ≔ groupObjACL
+        @act4: MaskACL ≔ maskACL
+        @act5: DACPermissions ≔ dacPermissions
+    end
+
+    event any_transition
+    any
+        fUsers
+        fGroups
+        fProcs
+        fFiles
+        fFolders
+        fSymLinks
+        fFDs
+        fFileParents
+        fFileLink
+        fProcFDs
+        fFDFlags
+        fFDFile
+        fFDNumber
+        fDACPermissions
+        fUserACL
+        fGroupObjACL
+        fGroupACL
+        fMaskACL
+        fFileUser
+        fFileGroup
+        fProcUser
+        fProcGroup
+        fProcUmask
+        fFileXattrs
+        fProcEXE
+        fProcArgv
+        fProcEnvp
+        fProcCwd
+        fProcParent
+        fUserGroups
+        fPathToRoot
+        fUserCaps
+    where
+        @grd1:  fUsers ⊆ USERS
+        @grd2:  fGroups ⊆ GROUPS
+        @grd3:  fProcs ⊆ PROCS
+        @grd4:  fFiles ⊆ FILES
+        @grd5:  fFolders ⊆ fFiles
+        @grd6:  fSymLinks ⊆ fFiles
+        @grd7:  fFDs ⊆ FILE_DESCRIPTORS
+        @grd8:  INIT ∈ fProcs
+        @grd9:  ROOT ∈ fFolders
+        @grd10: ROOT_USER ∈ fUsers
+        @grd11: fFileParents ∈ (fFiles ∖ {ROOT})  (fFolders × STRINGS)
+        @grd12: fFileLink ∈ fSymLinks → FILES × STRINGS
+        @grd13: fProcFDs ∈ fProcs ↔ fFDs
+        @grd14: fFDFlags ∈ fFDs → ℙ(OPEN_FLAGS)
+        @grd15: fFDFile ∈ fFDs → FILES
+        @grd16: fFDNumber ∈ fFDs → ℕ
+        @grd17: fDACPermissions ∈ fFiles → ℙ(PERMISSIONS)
+        @grd18: fUserACL ∈ (fFiles × fUsers) ⇸ ℙ(USER_PERMISSIONS)
+        @grd19: fGroupObjACL ∈ fFiles ⇸ ℙ(GROUP_PERMISSIONS)
+        @grd20: fGroupACL ∈ (fFiles × fGroups) ⇸ ℙ(GROUP_PERMISSIONS)
+        @grd21: fMaskACL ∈ fFiles ⇸ ℙ(GROUP_PERMISSIONS)
+        @grd22: fFileUser ∈ fFiles → fUsers
+        @grd23: fFileGroup ∈ fFiles → fGroups
+        @grd24: fProcUser ∈ fProcs → fUsers
+        @grd25: fProcGroup ∈ fProcs → fGroups
+        @grd26: fProcUmask ∈ fProcs → ℙ(PERMISSIONS ∖ FILE_MODES)
+        @grd27: fFileXattrs ∈ fFiles → (STRINGS ⇸ DATA)
+        @grd28: fProcEXE ∈ fProcs → FILES
+        @grd29: fProcArgv ∈ fProcs → ℙ(STRINGS)
+        @grd30: fProcEnvp ∈ fProcs → ℙ(STRINGS)
+        @grd31: fProcCwd ∈ fProcs → FILES
+        @grd32: fProcParent ∈ fProcs ∖ {INIT} → fProcs
+        @grd33: fUserGroups ∈ fUsers ↔ fGroups
+        @grd34: fPathToRoot ∈ fFolders → ℙ(fFolders)
+        @grd35: fUserCaps ∈ fUsers → ℙ(CAPABILITIES)
+        @grd36: fPathToRoot(ROOT) = ∅
+        @grd37: ∀f, p · f ∈ fFolders ∧ p ∈ dom(fFileParents[{f}])
+	⇒ fPathToRoot(f) = fPathToRoot(p) ∪ {p}
+        @grd38: ∀f, p · f ∈ fFolders ∧ p ∈ fPathToRoot(f)
+	⇒ fPathToRoot(p) ⊆ fPathToRoot(f)
+        @grd39: ∀f, p · f ∈ fFolders ∧ p ∈ fPathToRoot(f)
+	⇒ (∃c · (c ∈ fPathToRoot(f) ∪ {f}) ∧ p ∈ dom(fFileParents[{c}]))
+        @grd40: card(fFiles) ≤ MAX_FILES
+        @grd41: fSymLinks ∩ fFolders = ∅
+        @grd42: ∀p · p ∈ fProcs ⇒ fProcEXE(p) ∉ fFolders
+        @grd43: ∀p · p ∈ fProcs ⇒ card(fProcFDs[{p}]) ≤ PROC_FILE_LIMIT
+        @grd44: card(ran(fProcFDs)) ≤ FILE_LIMIT
+        @grd45: ∀p, fd · p ∈ fProcs ∧ p ↦ fd ∈ fProcFDs ∧ fFDFile(fd) ∈ fFolders ∧ O_PATH ∉ fFDFlags(fd)
+	⇒ O_WRONLY ∉ fFDFlags(fd) ∧ O_RDWR ∉ fFDFlags(fd)
+        // @grd46: ∀f · f ∈ fFolders ∖ {ROOT} ⇒ (∃p, n · fFileParents[{f}] = {p ↦ n})
+        @grd46: ∀f · f ∈ fFolders ∖ {ROOT} ⇒ (card(fFileParents[{f}]) = 1)
+        @grd47: ∀f, u · f ↦ u ∈ dom(fUserACL) ⇒ f ∈ dom(fMaskACL)
+        @grd48: ∀f, g · f ↦ g ∈ dom(fGroupACL) ⇒ f ∈ dom(fMaskACL)
+        @grd49: ∀f · f ∈ dom(fMaskACL) ⇒ fMaskACL(f) = fDACPermissions(f) ∩ GROUP_PERMISSIONS
+        @grd50: ∀f · f ∈ fFiles ∧ f ∉ dom(fMaskACL) ⇒ f ∈ dom(fGroupObjACL) ∧ fGroupObjACL(f) = fDACPermissions(f) ∩ GROUP_PERMISSIONS
+        @grd51: ∀p · p ∈ fProcs ∧ fProcCwd(p) ∈ fFiles ⇒ fProcCwd(p) ∈ fFolders
+        @grd52: ∀p · p ∈ fProcs ⇒ (∀fd1, fd2 · fd1 ∈ fProcFDs[{p}] ∧ fd2 ∈ fProcFDs[{p}] ⇒ (fd1 ≠ fd2 ⇒ fFDNumber(fd1) ≠ fFDNumber(fd2)))
+    then
+        @act1:  Users ≔ fUsers
+        @act2:  Groups ≔ fGroups
+        @act3:  Procs ≔ fProcs
+        @act4:  Files ≔ fFiles
+        @act5:  Folders ≔ fFolders
+        @act6:  SymLinks ≔ fSymLinks
+        @act7:  FDs ≔ fFDs
+        @act8:  FileParents ≔ fFileParents
+        @act9:  FileLink ≔ fFileLink
+        @act10: ProcFDs ≔ fProcFDs
+        @act11: FDFlags ≔ fFDFlags
+        @act12: FDFile ≔ fFDFile
+        @act13: FDNumber ≔ fFDNumber
+        @act14: DACPermissions ≔ fDACPermissions
+        @act15: UserACL ≔ fUserACL
+        @act16: GroupObjACL ≔ fGroupObjACL
+        @act17: GroupACL ≔ fGroupACL
+        @act18: MaskACL ≔ fMaskACL
+        @act19: FileUser ≔ fFileUser
+        @act20: FileGroup ≔ fFileGroup
+        @act21: ProcUser ≔ fProcUser
+        @act22: ProcGroup ≔ fProcGroup
+        @act23: ProcUmask ≔ fProcUmask
+        @act24: FileXattrs ≔ fFileXattrs
+        @act25: ProcEXE ≔ fProcEXE
+        @act26: ProcArgv ≔ fProcArgv
+        @act27: ProcEnvp ≔ fProcEnvp
+        @act28: ProcCwd ≔ fProcCwd
+        @act29: ProcParent ≔ fProcParent
+        @act30: UserGroups ≔ fUserGroups
+        @act31: PathToRoot ≔ fPathToRoot
+        @act32: UserCaps ≔ fUserCaps
+    end
+
+    event change_capabilities
+    any
+        user
+        caps
+    where
+        @grd1: user ∈ Users
+        @grd2: caps ⊆ CAPABILITIES
+    then
+        @act1: UserCaps(user) ≔ caps
+    end
+
+end

@@ -1,0 +1,14 @@
+context xattrs
+
+sets
+    XATTR_FLAGS
+
+constants
+    XATTR_CREATE
+    XATTR_REPLACE
+
+axioms
+    @XATTR_FLAGS_partition:
+        partition(XATTR_FLAGS, {XATTR_CREATE}, {XATTR_REPLACE})
+
+end

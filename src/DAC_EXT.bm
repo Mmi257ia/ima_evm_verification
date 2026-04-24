@@ -1,0 +1,149 @@
+machine DAC_EXT
+    refines DAC
+    sees RV open xattrs
+
+variables
+    Users
+    Groups
+    Procs
+    Files
+    Folders
+    SymLinks
+    FDs
+    FileParents
+    FileLink
+    ProcFDs
+    FDFlags
+    FDFile
+    FDNumber
+    DACPermissions
+    UserACL
+    GroupObjACL
+    GroupACL
+    MaskACL
+    FileUser
+    FileGroup
+    ProcUser
+    ProcGroup
+    ProcUmask
+    FileXattrs
+    ProcEXE
+    ProcArgv
+    ProcEnvp
+    ProcCwd
+    ProcParent
+    UserGroups
+    PathToRoot
+    UserCaps
+
+events
+    event INITIALISATION extends INITIALISATION
+    end
+
+    event open_create extends open_create
+      where
+        @grd25: O_DIRECTORY ∉ flags // директорию нельзя создавать при помощи open
+    end
+
+    event open_exists extends open_exists
+      where
+        @grd21: O_DIRECTORY ∈ flags ∧ O_PATH ∉ flags ⇒ O_CREAT ∉ flags // from Linux implementation
+        @grd22: O_PATH ∉ flags ∧ O_DIRECTORY ∉ flags ∧ O_CREAT ∈ flags ⇒ file ∉ Folders // from Linux implementation
+    end
+
+    event creat extends open_create
+      where
+        @grd25: flags = {O_CREAT, O_WRONLY, O_TRUNC} // -
+    end
+
+    event openat_create extends openat_create
+    end
+
+    event openat_exists extends openat_exists // in case of absolute pathname you need to call open_create or open_exists
+    end
+
+    event mkdir extends mkdir // TODO: add support for mkdirat?
+    end
+
+    event chmod extends chmod
+    end
+
+    event fchmod extends fchmod
+    end
+
+    event fchmodat extends fchmodat
+    end
+
+    event chown extends chown
+    end
+
+    event fchown extends fchown
+    end
+
+    event fchownat extends fchownat
+    end
+
+    event chdir extends chdir
+    end
+
+    event fchdir extends fchdir
+    end
+
+    event getdents extends getdents
+    end
+
+    event getxattr extends getxattr
+    end
+
+    event setxattr extends setxattr
+    end
+
+    event link extends link
+    end
+
+    event symlink extends symlink
+    end
+
+    event execve extends execve // TODO: support #!interpreter
+    end
+
+    event umask extends umask
+    end
+
+    event exit extends exit
+    end
+
+    event exit_group extends exit
+    end
+
+    event close extends close
+    end
+
+    event unlink extends unlink
+    end
+
+    event rmdir extends rmdir
+    end
+
+    event fork extends fork
+    end
+
+    event create_user extends create_user
+    end
+
+    event create_group extends create_group
+    end
+
+    event login extends login // create first user process
+    end
+
+    event set_acl extends set_acl
+    end
+
+    event any_transition extends any_transition
+    end
+
+    event change_capabilities extends change_capabilities
+    end
+
+end
