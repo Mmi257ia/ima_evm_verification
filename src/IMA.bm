@@ -315,13 +315,13 @@ events
         fIMAMode
         fEVMMode
       where
-        @grd52: fContentHash ∈ fFiles → HASHES
-        @grd53: fMetaHash ∈ fFiles → HASHES
-        @grd54: fImmutableFiles ⊆ fFiles
-        @grd55: fIMAHash ∈ fFiles ⇸ HASHES
-        @grd56: fEVMHash ∈ fFiles ⇸ HASHES
-        @grd57: fIMAMode ∈ INTEGRITY_MODES
-        @grd58: fEVMMode ∈ INTEGRITY_MODES
+        @grd53: fContentHash ∈ fFiles → HASHES
+        @grd54: fMetaHash ∈ fFiles → HASHES
+        @grd55: fImmutableFiles ⊆ fFiles
+        @grd56: fIMAHash ∈ fFiles ⇸ HASHES
+        @grd57: fEVMHash ∈ fFiles ⇸ HASHES
+        @grd58: fIMAMode ∈ INTEGRITY_MODES
+        @grd59: fEVMMode ∈ INTEGRITY_MODES
       then
         @act33: ContentHash ≔ fContentHash
         @act34: MetaHash ≔ fMetaHash
