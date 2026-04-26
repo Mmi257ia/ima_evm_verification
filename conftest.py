@@ -106,6 +106,8 @@ def m():
     m.DEF_FOLDER_PERMS = frozenset((m.UREAD, m.UWRITE, m.UEXECUTE, m.GREAD, m.GEXECUTE, m.OREAD, m.OEXECUTE))
     m.DEF_SYMLINK_PERMS = frozenset((m.UREAD, m.UWRITE, m.UEXECUTE, m.GREAD, m.GWRITE, m.GEXECUTE, m.OREAD, m.OWRITE, m.OEXECUTE))
 
+    m.INTEGRITY_MODES = frozenset((m.ENFORCE, m.FIX, m.OFF))
+
     # ⚬	O_RDONLY_type:	O_RDONLY = 1 not theorem ›
     m.O_RDONLY = 1
     # ⚬	O_WRONLY_type:	O_WRONLY = 2 not theorem ›
@@ -214,4 +216,12 @@ def m():
     # @act32: UserCaps ≔ {ROOT_USER ↦ ∅}
     m.UserCaps |= {(m.ROOT_USER, frozenset())}
 
+    # @act41: ContentHash ≔ {ROOT ↦ ROOT_CONTENT_HASH, INIT_EXE ↦ INIT_EXE_CONTENT_HASH}
+    m.ContentHash |= {(m.ROOT, m.ROOT_CONTENT_HASH), (m.INIT_EXE, m.INIT_EXE_CONTENT_HASH)}
+    # @act42: MetaHash ≔ {ROOT ↦ ROOT_META_HASH, INIT_EXE ↦ INIT_EXE_META_HASH}
+    m.MetaHash |= {(m.ROOT, m.ROOT_META_HASH), (m.INIT_EXE, m.INIT_EXE_META_HASH)}
+    # @act46: IMAMode ≔ OFF
+    m.IMAMode = m.OFF
+    # @act47: EVMMode ≔ OFF
+    m.EVMMode = m.OFF
     return m
