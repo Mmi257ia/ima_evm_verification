@@ -12,7 +12,6 @@
 #include <sys/wait.h>
 #include <sys/syscall.h>
 #include <sys/stat.h>
-#include <linux/perf_event.h>
 
 #define PIN_PATH "/sys/fs/bpf/anis"
 #define MAPS_PATH PIN_PATH "/maps"
@@ -260,7 +259,7 @@ static int handle_event(void *ctx, void *data, size_t len)
         char *decoded_value;
         __u8 *raw_value = e->getxattr.value;
         __u64 raw_size = e->getxattr.size;
-        ssize_t size = e->ret;
+        ssize_t size = e->ret;        
         if (raw_size <= 0 || size <= 0) {
             decoded_value = ""; // getxattr fails
         } else if (is_string(raw_value, size + 1)) {
@@ -356,16 +355,13 @@ load(void)
         fprintf(stderr, "Failed to mkdir " MAPS_PATH "; error %d\n", err);
         goto END;
     }
-    if ((err = bpf_object__pin_maps(skel->obj, MAPS_PATH)) != 0) {
-        fprintf(stderr, "Failed to pin maps; error %d\n", err);
-    }
-
-    if ((err = mkdir(PROGS_PATH, 0700)) != 0) {
-        fprintf(stderr, "Failed to mkdir " PROGS_PATH "; error %d\n", err);
+    if ((err = bpf_map__pin(skel->maps.events, MAPS_PATH "/events")) != 0) {
+        fprintf(stderr, "Failed to pin map 'events'; error %d\n", err);
         goto END;
     }
-    if ((err = bpf_object__pin_programs(skel->obj, PROGS_PATH)) != 0) {
-        fprintf(stderr, "Failed to pin programs; error %d\n", err);
+
+    if ((err = bpf_map__pin(skel->maps.config_map, MAPS_PATH "/config_map")) != 0) {
+        fprintf(stderr, "Failed to pin map 'config_map'; error %d\n", err);
         goto END;
     }
 
@@ -381,6 +377,15 @@ load(void)
     cfg.filter_tst = 1;
     bpf_map_update_elem(cfg_fd, &key, &cfg, BPF_ANY);
 
+
+    if ((err = mkdir(PROGS_PATH, 0700)) != 0) {
+        fprintf(stderr, "Failed to mkdir " PROGS_PATH "; error %d\n", err);
+        goto END;
+    }
+    if ((err = bpf_object__pin_programs(skel->obj, PROGS_PATH)) != 0) {
+        fprintf(stderr, "Failed to pin programs; error %d\n", err);
+        goto END;
+    }
     if ((err = syscall_monitor_bpf__attach(skel)) != 0) { // attach all links
         fprintf(stderr, "Failed to attach links; error %d\n", err);
         goto END;
@@ -404,7 +409,6 @@ load(void)
             goto END;
         }
     }
-
 END:
     syscall_monitor_bpf__destroy(skel);
     if (err != 0) {
@@ -412,7 +416,6 @@ END:
     }
     return (err == 0 ? 0 : 1);
 }
-
 
 int
 unload(void)
@@ -427,8 +430,18 @@ run(int argc, char *argv[])
     struct ring_buffer *rb = 0;
     int err = 0;
 
+    int cfg_fd;
+    if ((cfg_fd = bpf_obj_get(MAPS_PATH "/config_map")) < 0) {
+        fprintf(stderr, "Failed to open the pinned map 'config_map'; error %d\n", err);
+        return 1;
+    }
+    struct monitor_config cfg = {0};
+    __u32 key = 0;
+    cfg.enabled = 1;
+    cfg.filter_tst = 1;
+    bpf_map_update_elem(cfg_fd, &key, &cfg, BPF_ANY);
+
     int events_fd;
-    int cfg_fd = -1;
     if ((events_fd = bpf_obj_get(MAPS_PATH "/events")) < 0) {
         fprintf(stderr, "Failed to open the pinned map 'events'; error %d\n", events_fd);
         err = events_fd;
@@ -441,19 +454,7 @@ run(int argc, char *argv[])
         goto END;
     }
 
-    if ((cfg_fd = bpf_obj_get(MAPS_PATH "/config_map")) < 0) {
-        fprintf(stderr, "Failed to open the pinned map 'config_map'; error %d\n", err);
-        err = 1;
-        goto END;
-    }
-    struct monitor_config cfg = {0};
-    __u32 key = 0;
-    cfg.enabled = 1;
-    cfg.filter_tst = 1;
-    bpf_map_update_elem(cfg_fd, &key, &cfg, BPF_ANY);
-
     signal(SIGINT, set_exited);
-
 
     pid_t child = 0;
     if ((err = child = fork()) < 0) {
@@ -485,10 +486,8 @@ run(int argc, char *argv[])
 END:
     if (rb) ring_buffer__free(rb);
 
-    if (cfg_fd != -1) {
-        cfg.enabled = 0;
-        bpf_map_update_elem(cfg_fd, &key, &cfg, BPF_ANY);
-    }
+    cfg.enabled = 0;
+    bpf_map_update_elem(cfg_fd, &key, &cfg, BPF_ANY);
 
     return err == 0 ? 0 : 1;
 }
