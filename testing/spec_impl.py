@@ -38,6 +38,27 @@ class LinuxTestSpecImpl(LinuxTestSpec):
         self._label = sha256(nodeid.encode()).hexdigest()[:10]
 
 
+    def setup_ima_policy(self,
+                         fowner_uid: str) -> None:
+        """
+        IMA policy is a kernel property, and the kernel is being shared among
+        the host system and all the containers. Also, IMA policy can be changed
+        just once per kernel launch. To change it, reboot is required.
+        Thus, this function checks if the policy was set before. If it was,
+        it does nothing. Else, it sets the required policy from the host system.
+        Currently, policies are just "appraise files owned by the user with uid".
+        """
+        securityfs_path = Path('/sys/kernel/security')
+        ima_path = securityfs_path / 'ima'
+        if not ima_path.exists():
+            raise RuntimeError(f"Can't find IMA files ({ima_path})."
+                               f'Perhaps IMA is not supported or securityfs is not mounted on {securityfs_path}?')
+        ima_policy_path = ima_path / 'policy'
+        is_policy_set = not ima_policy_path.exists()
+        if not is_policy_set:
+            subprocess.run(['sudo', 'sh', '-c',
+                            f"echo 'appraise fowner={fowner_uid}' > {ima_policy_path}"])
+
     def make_user(self,
                 user: str,
                 supplementary_groups: None | list[str] = None) -> None:
