@@ -52,10 +52,10 @@ class LinuxTestSpecImpl(LinuxTestSpec):
         self.add_setup(f'groupadd {group}')
 
     def make_file(self,
-                 path: str,
-                 owner: str,
-                 group: str,
-                 mode: int) -> None:
+                  path: str,
+                  owner: str,
+                  group: str,
+                  mode: int) -> None:
         if not isabs(path):
             raise ValueError('Relative paths are not supported')
         self._initialiser.add_file(path)

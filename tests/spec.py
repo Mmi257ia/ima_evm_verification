@@ -96,14 +96,14 @@ class LinuxTestSpec(Protocol):
         ...
 
     def make_group(self,
-                     group: str) -> None:
+                   group: str) -> None:
         ...
 
     def make_file(self,
-                 path: str,
-                 owner: str,
-                 group: str,
-                 mode: int) -> None:
+                  path: str,
+                  owner: str,
+                  group: str,
+                  mode: int) -> None:
         ...
 
     def make_dir(self,
@@ -112,7 +112,7 @@ class LinuxTestSpec(Protocol):
                  group: str,
                  mode: int) -> None:
         ...
-    
+
     def add_setup(self, setup_cmd: str) -> Any:
         ...
 
