@@ -10,7 +10,7 @@ import subprocess
 import sys
 import tempfile
 import textwrap
-from typing import Any, Iterator
+from typing import Any, Iterator, Optional
 
 from anis.stages.trace_checkers import ModelTraceInterpreter
 from anis.stages.systrace import TraceOperation
@@ -60,13 +60,13 @@ class LinuxTestSpecImpl(LinuxTestSpec):
                             f"echo 'appraise fowner={fowner_uid}' > {ima_policy_path}"])
 
     def make_user(self,
-                user: str,
-                supplementary_groups: None | list[str] = None) -> None:
+                  user: str,
+                  supplementary_groups: Optional[list[str]] = None,
+                  uid: Optional[int] = None) -> None:
         self._initialiser.add_user(user)
-        if not supplementary_groups:
-            self.add_setup(f'useradd {user}')
-        else:
-            self.add_setup(f'useradd -G {",".join(supplementary_groups)} {user}')
+        uid_flag = f'-u {uid}' if uid is not None else ''
+        supplementary_groups_flag = f'-G {",".join(supplementary_groups)}' if supplementary_groups else ''
+        self.add_setup(f'useradd {uid_flag} {supplementary_groups_flag} {user}')
 
     def make_group(self, group: str) -> None:
         self._initialiser.add_group(group)

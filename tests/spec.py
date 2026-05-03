@@ -95,8 +95,9 @@ class LinuxTestSpec(Protocol):
         ...
 
     def make_user(self,
-                user: str,
-                supplementary_groups: Optional[list[str]] = None) -> None:
+                  user: str,
+                  supplementary_groups: Optional[list[str]] = None,
+                  uid: Optional[int] = None) -> None:
         ...
 
     def make_group(self,
