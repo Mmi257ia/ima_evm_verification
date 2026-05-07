@@ -132,21 +132,43 @@ def model_trace_py_saving(label: str, MT: type[ModelTraceInterpreter]) -> Genera
 
                 f.write(textwrap.dedent(f"""
                     import conftest
-
                     m = conftest.m._get_wrapped_function()() # pyright: ignore[reportPrivateUsage]
+
                 """))
 
             def add(self, event_function: Callable[..., Event], *, expected: bool, skip_coverage: bool = False, **args: Any):
 
+                m_changed = False
+                carrier_sets = getattr(self.machine, '_carrier_sets')
+                for carrier_set_name, real_item_type in carrier_sets.values():
+                    cs_new = getattr(self.machine, carrier_set_name)
+                    cs_old = getattr(self._machine_copy, carrier_set_name)
+                    if cs_new == cs_old:
+                        continue
+                    for v in cs_new - cs_old:
+                        c = 'carrier_set_item'
+                        if c not in self._imported:
+                            f.write(f'from anis.model.expressions import {c}\n')
+                            self._imported.add(c)
+                        f.write(f'{repr(v)} = {c}(m, m.{real_item_type.__name__})\n')
+                        m_changed = True
+
                 for attr in dir(self.machine):
                     if attr.startswith('_') or attr.endswith('_'):
-                        continue
-                    if hasattr(self.machine.sets, attr): #is carrier set
                         continue
                     v_new = getattr(self.machine, attr)
                     v_old = getattr(self._machine_copy, attr)
                     if v_new != v_old:
                         f.write(f'm.{attr} = {repr(v_new)}\n')
+                        m_changed = True
+
+                check_axioms = 'check_axioms'
+
+                if m_changed:
+                    if check_axioms not in self._imported:
+                        f.write(f'from anis.stages.invariants import {check_axioms}\n')
+                        self._imported.add(check_axioms)
+                    f.write(f'{check_axioms}(m)\n')
 
                 name = event_function.__name__
                 assertion = 'assertTrue' if expected else 'assertFalse'
@@ -160,7 +182,16 @@ def model_trace_py_saving(label: str, MT: type[ModelTraceInterpreter]) -> Genera
                 for k, v in args.items():
                     # TODO empty frozensets should be explicitly typed (also inside other structures)
                     f.write(f'{k} = {repr(v)}\n')
-                f.write(f'{assertion}({name}(m, {args_printed}))\n\n')
+                f.write(f'{assertion}({name}(m, {args_printed}))\n')
+
+                if expected:
+                    if check_axioms not in self._imported:
+                        f.write(f'from anis.stages.invariants import {check_axioms}\n')
+                        self._imported.add(check_axioms)
+                    f.write(f'{check_axioms}(m)\n')
+
+                f.write('\n')
+
                 ret = super().add(event_function, expected=expected, skip_coverage=skip_coverage, **args)
 
                 self._machine_copy = copy(self.machine)

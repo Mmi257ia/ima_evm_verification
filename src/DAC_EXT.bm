@@ -47,8 +47,8 @@ events
 
     event open_exists extends open_exists
       where
-        @grd21: O_DIRECTORY ∈ flags ∧ O_PATH ∉ flags ⇒ O_CREAT ∉ flags // from Linux implementation
-        @grd22: O_PATH ∉ flags ∧ O_DIRECTORY ∉ flags ∧ O_CREAT ∈ flags ⇒ file ∉ Folders // from Linux implementation
+        @grd21: O_DIRECTORY ∈ flags ∧ O_PATH ∉ flags ⇒ O_CREAT ∉ flags // - (является следствием других гардов) from Linux implementation
+        @grd22: O_PATH ∉ flags ∧ O_CREAT ∈ flags ⇒ file ∉ Folders // from Linux implementation
     end
 
     event creat extends open_create
@@ -60,6 +60,9 @@ events
     end
 
     event openat_exists extends openat_exists // in case of absolute pathname you need to call open_create or open_exists
+      where
+        @grd26: O_DIRECTORY ∈ flags ∧ O_PATH ∉ flags ⇒ O_CREAT ∉ flags // - (является следствием других гардов) from Linux implementation
+        @grd27: O_PATH ∉ flags ∧ O_CREAT ∈ flags ⇒ file ∉ Folders // from Linux implementation
     end
 
     event mkdir extends mkdir // TODO: add support for mkdirat?

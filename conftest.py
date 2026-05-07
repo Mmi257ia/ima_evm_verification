@@ -7,13 +7,29 @@ from _pytest.fixtures import SubRequest # type: ignore
 from typing import Any
 
 from model.machine import Machine
-from anis.model.expressions import carrier_set
+from anis.model.expressions import constant
 
 @fixture
 def t(request: SubRequest, monitor_loaded: Any, m: Machine):
     from testing.spec_impl import LinuxTestSpecImpl
     return LinuxTestSpecImpl(request.node.nodeid, m, request.node.path)
 
+def loader_process(rcvc1: Connection, sndc1: Connection, rcvc2: Connection, sndc2: Connection):
+    os.setsid()
+    print('Loading monitor ...', end=' ')
+    run(['sudo', 'make', '-s', '-C', 'monitoring', 'load'], check=True)
+    print('ok')
+    rcvc1.close()
+    sndc2.close()
+    sndc1.close() # loader is ready
+    try:
+        rcvc2.recv() # wait for closing conn2 (i.e. may unload)
+    except EOFError:
+        pass
+    finally:
+        print('Unloading monitor ...', end=' ')
+        run(['sudo', 'make', '-s', '-C', 'monitoring', 'unload'], check=True)
+        print('ok')
 
 @fixture(scope='session')
 def monitor_loaded():
@@ -24,23 +40,6 @@ def monitor_loaded():
     the monitor will be unloaded. So do not run tests immediately after
     the "Finished running tests!" message was appeared in "Test Results"! 
     """
-
-    def loader_process(rcvc1: Connection, sndc1: Connection, rcvc2: Connection, sndc2: Connection):
-        os.setsid()
-        print('Loading monitor ...', end=' ')
-        run(['sudo', 'make', '-s', '-C', 'monitoring', 'load'], check=True)
-        print('ok')
-        rcvc1.close()
-        sndc2.close()
-        sndc1.close() # loader is ready
-        try:
-            rcvc2.recv() # wait for closing conn2 (i.e. may unload)
-        except EOFError:
-            pass
-        finally:
-            print('Unloading monitor ...', end=' ')
-            run(['sudo', 'make', '-s', '-C', 'monitoring', 'unload'], check=True)
-            print('ok')
 
     rcvc1, sndc1 = Pipe(duplex=False)
     rcvc2, sndc2 = Pipe(duplex=False)
@@ -63,27 +62,46 @@ def monitor_loaded():
 def m():
     m = Machine()
 
+    m.INIT = constant('INIT', m, m.ProcsItem)
+    m.INIT_EXE = constant('INIT_EXE', m, m.FilesItem)
+    m.INIT_NAME = constant('INIT_NAME', m, m.StringsItem)
+    m.ROOT = constant('ROOT', m, m.FilesItem)
+    m.ROOT_USER = constant('ROOT_USER', m, m.UsersItem)
+    m.ROOT_GROUP = constant('ROOT_GROUP', m, m.GroupsItem)
+
     m.MAX_FILES = 1048576
     m.PROC_FILE_LIMIT = 1024
     m.FILE_LIMIT = 1024
 
-    # Permissions should be redefined because
-    # there are its items with several names
-    # and Machine() creates different objects for them
-    m.sets.PERMISSIONS = carrier_set('PERMISSIONS', m, Machine.PermissionsItem)
+    m.UREAD = constant('UREAD', m, m.PermissionsItem)
+    m.UWRITE = constant('UWRITE', m, m.PermissionsItem)
+    m.UEXECUTE = constant('UEXECUTE', m, m.PermissionsItem)
+    m.GREAD = constant('GREAD', m, m.PermissionsItem)
+    m.GWRITE = constant('GWRITE', m, m.PermissionsItem)
+    m.GEXECUTE = constant('GEXECUTE', m, m.PermissionsItem)
+    m.OREAD = constant('OREAD', m, m.PermissionsItem)
+    m.OWRITE = constant('OWRITE', m, m.PermissionsItem)
+    m.OEXECUTE = constant('OEXECUTE', m, m.PermissionsItem)
+    m.SET_UID = constant('SET_UID', m, m.PermissionsItem)
+    m.SET_GID = constant('SET_GID', m, m.PermissionsItem)
+    m.STICKY_BIT = constant('STICKY_BIT', m, m.PermissionsItem)
 
-    m.UREAD = m.sets.PERMISSIONS('UREAD')
-    m.UWRITE = m.sets.PERMISSIONS('UWRITE')
-    m.UEXECUTE = m.sets.PERMISSIONS('UEXECUTE')
-    m.GREAD = m.sets.PERMISSIONS('GREAD')
-    m.GWRITE = m.sets.PERMISSIONS('GWRITE')
-    m.GEXECUTE = m.sets.PERMISSIONS('GEXECUTE')
-    m.OREAD = m.sets.PERMISSIONS('OREAD')
-    m.OWRITE = m.sets.PERMISSIONS('OWRITE')
-    m.OEXECUTE = m.sets.PERMISSIONS('OEXECUTE')
-    m.SET_UID = m.sets.PERMISSIONS('SET_UID')
-    m.SET_GID = m.sets.PERMISSIONS('SET_GID')
-    m.STICKY_BIT = m.sets.PERMISSIONS('STICKY_BIT')
+    m.XATTR_CREATE = constant('XATTR_CREATE', m, m.XattrFlagsItem)
+    m.XATTR_REPLACE = constant('XATTR_REPLACE', m, m.XattrFlagsItem)
+
+    m.AT_FDCWD = constant('AT_FDCWD', m, m.FileDescriptorsExtendedItem)
+
+    m.ENFORCE = constant('ENFORCE', m, m.IntegrityModesItem)
+    m.FIX = constant('FIX', m, m.IntegrityModesItem)
+    m.OFF = constant('OFF', m, m.IntegrityModesItem)
+
+    m.IMA_STRING = constant('IMA_STRING', m, m.StringsItem)
+    m.EVM_STRING = constant('EVM_STRING', m, m.StringsItem)
+
+    m.ROOT_CONTENT_HASH = constant('ROOT_CONTENT_HASH', m, m.HashesItem)
+    m.ROOT_META_HASH = constant('ROOT_META_HASH', m, m.HashesItem)
+    m.INIT_EXE_CONTENT_HASH = constant('INIT_EXE_CONTENT_HASH', m, m.HashesItem)
+    m.INIT_EXE_META_HASH = constant('INIT_EXE_META_HASH', m, m.HashesItem)
 
     m.S_IRUSR = m.UREAD
     m.S_IWUSR = m.UWRITE

@@ -1,6 +1,6 @@
 from collections import defaultdict
 from functools import reduce
-from os import O_RDONLY, O_RDWR, O_WRONLY
+import os
 from os.path import basename
 from stat import S_IMODE
 from typing import Optional, Sequence
@@ -34,17 +34,18 @@ from model.machine import Machine
 from mediator.enums import FileFlags, Modes, XattrFlags
 from mediator.state import Inode, ProcFD
 
+from anis.model.expressions import carrier_set_item
 
 class DataTranslator:
 
     def __init__(self, *, m: Machine, root_dev: int, root_ino: int, root_uid: int, root_gid: int):
-        self.model_files = defaultdict[Inode, m.FilesItem](m.sets.FILES) # implementation (#dev, #inode) to name of variable
-        self.model_strings = defaultdict[str, m.StringsItem](m.sets.STRINGS)
-        self.model_data = defaultdict[bytes, m.DataItem](m.sets.DATA)
-        self.model_users = defaultdict[int, m.UsersItem](m.sets.USERS) # implementation to model
-        self.model_groups = defaultdict[int, m.GroupsItem](m.sets.GROUPS) # implementation to model
-        self.model_procs = defaultdict[int, m.ProcsItem](m.sets.PROCS) # implementation to model
-        self.model_fds = defaultdict[tuple[int, int], m.FileDescriptorsExtendedItem](m.sets.FILE_DESCRIPTORS_EXTENDED) # implementation (pid, fd) to model
+        self.model_files = defaultdict[Inode, m.FilesItem](lambda: carrier_set_item(m, m.FilesItem)) # implementation (#dev, #inode) to name of variable
+        self.model_strings = defaultdict[str, m.StringsItem](lambda: carrier_set_item(m, m.StringsItem))
+        self.model_data = defaultdict[bytes, m.DataItem](lambda: carrier_set_item(m, m.DataItem))
+        self.model_users = defaultdict[int, m.UsersItem](lambda: carrier_set_item(m, m.UsersItem)) # implementation to model
+        self.model_groups = defaultdict[int, m.GroupsItem](lambda: carrier_set_item(m, m.GroupsItem)) # implementation to model
+        self.model_procs = defaultdict[int, m.ProcsItem](lambda: carrier_set_item(m, m.ProcsItem)) # implementation to model
+        self.model_fds = defaultdict[tuple[int, int], m.FileDescriptorsExtendedItem](lambda: carrier_set_item(m, m.FileDescriptorsExtendedItem)) # implementation (pid, fd) to model
 
         # it comes from INITIALISATION event...
         self.model_users[root_uid] = m.ROOT_USER
@@ -96,13 +97,22 @@ class EventsBuilder:
         # check: if any bit of "flags" is 1, then it is translatable (FileFlags has any flags from "flags")
         assert (flags & ~(reduce(lambda x, y: (x | y), self._FileFlags.keys(), 0))) == 0
         assert self._FileFlags[0] == self._machine.O_RDONLY
-        if (flags & O_WRONLY) != 0:
-            e = self._FileFlags[O_WRONLY]
-        elif (flags & O_RDWR) != 0:
-            e = self._FileFlags[O_RDWR]
+        if (flags & (os.O_WRONLY | os.O_RDWR)) == os.O_WRONLY | os.O_RDWR:
+            # both O_WRONLY and O_RDWR are set;
+            # implementation discards O_WRONLY in this case
+            e = self._FileFlags[os.O_RDWR]
+            flags1 = flags & ~os.O_WRONLY & ~os.O_RDWR
+        elif (flags & os.O_WRONLY) != 0:
+            e = self._FileFlags[os.O_WRONLY]
+            flags1 = flags & ~os.O_WRONLY
+        elif (flags & os.O_RDWR) != 0:
+            e = self._FileFlags[os.O_RDWR]
+            flags1 = flags & ~os.O_RDWR
         else:
-            e = self._FileFlags[O_RDONLY]
-        model_flags = [e] + [flag_bit for f, flag_bit in self._FileFlags.items() if (flags & f) != 0]
+            e = self._FileFlags[os.O_RDONLY]
+            flags1 = flags
+        model_flags = [e] + [flag_bit for f, flag_bit in self._FileFlags.items()
+                             if (flags1 & f) == f and f not in {os.O_RDONLY, os.O_WRONLY, os.O_RDWR}]
         return frozenset(model_flags)
 
     def translate_xattr_flags(self, flags: int):

@@ -1,0 +1,163 @@
+machine ProtectedHardlinks
+
+refines DAC_EXT
+
+variables
+    Users
+    Groups
+    Procs
+    Files
+    Folders
+    SymLinks
+    FDs
+    FileParents
+    FileLink
+    ProcFDs
+    FDFlags
+    FDFile
+    FDNumber
+    DACPermissions
+    UserACL
+    GroupObjACL
+    GroupACL
+    MaskACL
+    FileUser
+    FileGroup
+    ProcUser
+    ProcGroup
+    ProcUmask
+    FileXattrs
+    ProcEXE
+    ProcArgv
+    ProcEnvp
+    ProcCwd
+    ProcParent
+    UserGroups
+    PathToRoot
+    UserCaps
+
+events
+    event INITIALISATION extends INITIALISATION
+    end
+
+    event open_create extends open_create
+    end
+
+    event open_exists extends open_exists
+    end
+
+    event creat extends creat
+    end
+
+    event openat_create extends openat_create
+    end
+
+    event openat_exists extends openat_exists
+    end
+
+    event mkdir extends mkdir
+    end
+
+    event chmod extends chmod
+    end
+
+    event fchmod extends fchmod
+    end
+
+    event fchmodat extends fchmodat
+    end
+
+    event chown extends chown
+    end
+
+    event fchown extends fchown
+    end
+
+    event fchownat extends fchownat
+    end
+
+    event chdir extends chdir
+    end
+
+    event fchdir extends fchdir
+    end
+
+    event getdents extends getdents
+    end
+
+    event getxattr extends getxattr
+    end
+
+    event setxattr extends setxattr
+    end
+
+    event link extends link
+    where
+        @grd12: ProcUser(proc) ≠ FileUser(file) ∧ ProcUser(proc) ≠ ROOT_USER  // ∧ fs.protected_hardlinks=1
+                   ⇒ (((file ∉ dom(MaskACL) ∨ MaskACL(file) = ∅)
+                           ∧ FileGroup(file) ≠ ProcGroup(proc) ∧ ProcUser(proc) ↦ FileGroup(file) ∉ UserGroups
+                           ∧ {OREAD, OWRITE} ⊆ DACPermissions(file))
+                       ∨ (file ↦ ProcUser(proc) ∈ dom(UserACL) ∧ {UREAD, UWRITE} ⊆ UserACL(file ↦ ProcUser(proc))
+                           ∧ {GREAD, GWRITE} ⊆ MaskACL(file))
+                       ∨ (file ↦ ProcUser(proc) ∉ dom(UserACL)
+                           ∧ (∃g · (g ∈ {ProcGroup(proc)} ∪ UserGroups[{ProcUser(proc)}])
+                               ∧ ((file ↦ g ∈ dom(GroupACL) ∧ {GREAD, GWRITE} ⊆ GroupACL(file ↦ g)) ∨ (g = FileGroup(file) ∧ file ∈ dom(GroupObjACL) ∧ {GREAD, GWRITE} ⊆ GroupObjACL(file))))
+                           ∧ file ∈ dom(MaskACL) ∧ {GREAD, GWRITE} ⊆ MaskACL(file))
+                       ∨ (file ∉ dom(MaskACL)
+                           ∧ (FileGroup(file) = ProcGroup(proc) ∨ ProcUser(proc) ↦ FileGroup(file) ∈ UserGroups)
+                           ∧ {GREAD, GWRITE} ⊆ DACPermissions(file))
+                       ∨ (file ∈ dom(MaskACL) ∧ MaskACL(file) ≠ ∅
+                           ∧ file ↦ ProcUser(proc) ∉ dom(UserACL)
+                           ∧ (∀g · (g ∈ {ProcGroup(proc)} ∪ UserGroups[{ProcUser(proc)}]) ⇒ file ↦ g ∉ dom(GroupACL))
+                           ∧ FileGroup(file) ≠ ProcGroup(proc) ∧ ProcUser(proc) ↦ FileGroup(file) ∉ UserGroups
+                           ∧ {OREAD, OWRITE} ⊆ DACPermissions(file)))
+    end
+
+    event symlink extends symlink
+    end
+
+    event execve extends execve
+    end
+
+    event umask extends umask
+    end
+
+    event exit extends exit
+    end
+
+    event exit_group extends exit_group
+    end
+
+    event close extends close
+    end
+
+    event unlink extends unlink
+    end
+
+    event rmdir extends rmdir
+    end
+
+    event fork extends fork
+    end
+
+    event create_user extends create_user
+    end
+
+    event create_group extends create_group
+    end
+
+    event login extends login
+    end
+
+    event set_acl extends set_acl
+    end
+
+    event any_transition extends any_transition
+    end
+
+    event change_capabilities extends change_capabilities
+    end
+
+
+
+end

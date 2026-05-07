@@ -1,51 +1,55 @@
+import os
+import stat
+
 from model.machine import Machine
 
 
 def Modes(m: Machine):
     return {
-        0o04000: m.SET_UID,
-        0o02000: m.SET_GID,
-        0o01000: m.STICKY_BIT,
+        stat.S_ISUID: m.SET_UID,
+        stat.S_ISGID: m.SET_GID,
+        stat.S_ISVTX: m.STICKY_BIT,
 
-        0o00400: m.UREAD,
-        0o00200: m.UWRITE,
-        0o00100: m.UEXECUTE,
+        stat.S_IRUSR: m.UREAD,
+        stat.S_IWUSR: m.UWRITE,
+        stat.S_IXUSR: m.UEXECUTE,
 
-        0o00040: m.GREAD,
-        0o00020: m.GWRITE,
-        0o00010: m.GEXECUTE,
+        stat.S_IRGRP: m.GREAD,
+        stat.S_IWGRP: m.GWRITE,
+        stat.S_IXGRP: m.GEXECUTE,
 
-        0o00004: m.OREAD,
-        0o00002: m.OWRITE,
-        0o00001: m.OEXECUTE,
+        stat.S_IROTH: m.OREAD,
+        stat.S_IWOTH: m.OWRITE,
+        stat.S_IXOTH: m.OEXECUTE,
     }
 
 def FileFlags(m: Machine):
     return {
-        0o00000000: m.O_RDONLY,
-        0o00000001: m.O_WRONLY,
-        0o00000002: m.O_RDWR,
+        os.O_RDONLY: m.O_RDONLY,
+        os.O_WRONLY: m.O_WRONLY,
+        os.O_RDWR: m.O_RDWR,
 
-        0o00000100: m.O_CREAT,
-        0o00000200: m.O_EXCL,
-        0o00000400: m.O_NOCTTY,
-        0o00001000: m.O_TRUNC,
-        0o00002000: m.O_APPEND,
-        0o00004000: m.O_NOBLOCK, # typo in the model? O_NO(N)BLOCK
-        0o00010000: m.O_DSYNC,
+        os.O_CREAT: m.O_CREAT,
+        os.O_EXCL: m.O_EXCL,
+        os.O_NOCTTY: m.O_NOCTTY,
+        os.O_TRUNC: m.O_TRUNC,
+        os.O_APPEND: m.O_APPEND,
+        os.O_NONBLOCK: m.O_NOBLOCK, # typo in the model? O_NO(N)BLOCK
+        os.O_DSYNC: m.O_DSYNC,
         # 0o00020000: FASYNC, # no such a constant in the model
-        0o00040000: m.O_DIRECT,
-        0o00100000: m.O_LARGEFILE,
-        0o00200000: m.O_DIRECTORY,
-        0o00400000: m.O_NOFOLLOW,
-        0o01000000: m.O_NOATIME,
-        0o02000000: m.O_CLOEXEC,
-        0o10000000: m.O_PATH,
+        os.O_DIRECT: m.O_DIRECT,
+        # os.O_LARGEFILE: m.O_LARGEFILE, because os.O_LARGEFILE == 0 (== os.O_RDONLY!)
+        os.O_DIRECTORY: m.O_DIRECTORY,
+        os.O_NOFOLLOW: m.O_NOFOLLOW,
+        os.O_NOATIME: m.O_NOATIME,
+        os.O_CLOEXEC: m.O_CLOEXEC,
+        os.O_PATH: m.O_PATH,
+        os.O_TMPFILE: m.O_TMPFILE,
     }
 
 def XattrFlags(m: Machine):
     return {
-        0o1: m.XATTR_CREATE,
-        0o2: m.XATTR_REPLACE,
+        os.XATTR_CREATE: m.XATTR_CREATE,
+        os.XATTR_REPLACE: m.XATTR_REPLACE,
     }
 

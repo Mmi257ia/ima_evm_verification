@@ -1,4 +1,8 @@
 {
+    "git.enabled": true,
+    "python.testing.unittestEnabled": false,
+    "python.testing.pytestEnabled": true,
     "anis.componentUnderTest": "IMA_EXT",
-    "python.testing.pytestEnabled": true
+    "anis.coverage.enabled": true,
+    "anis.coverage.kind": "branch-conditions",
 }

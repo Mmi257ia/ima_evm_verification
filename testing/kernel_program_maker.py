@@ -1,8 +1,8 @@
 from collections import defaultdict
 from dataclasses import dataclass
 from functools import reduce
-from os import O_APPEND, O_CLOEXEC, O_CREAT, O_DIRECT, O_DIRECTORY, O_DSYNC, O_EXCL, O_LARGEFILE, O_NOATIME, O_NOCTTY, O_NOFOLLOW, O_NONBLOCK, O_PATH, O_RDONLY, O_RDWR, O_TRUNC, O_WRONLY, XATTR_CREATE, XATTR_REPLACE
-from stat import S_ISGID, S_ISUID, S_ISVTX
+import os
+import stat
 from typing import Callable, Dict, List, Optional, Union
 
 from tests.spec import ProgramMakerTextProducer
@@ -17,51 +17,62 @@ class Expression:
     text: str
 
 ModeBits = {
-    S_ISUID: 'S_ISUID',
-    S_ISGID: 'S_ISGID',
-    S_ISVTX: 'S_ISVTX',
+    stat.S_ISUID: 'S_ISUID',
+    stat.S_ISGID: 'S_ISGID',
+    stat.S_ISVTX: 'S_ISVTX',
 }
 
 def mode2expr(mode: int) -> Expression:
     return Expression(f'0{(mode & 0o777):0o}' + ''.join([f'| {ModeBits[m]}' for m in ModeBits if (mode & m) != 0]))
 
 OpenFlags = {
-	O_RDONLY    : 'O_RDONLY',
-	O_WRONLY    : 'O_WRONLY',
-	O_RDWR      : 'O_RDWR',
-	O_CREAT     : 'O_CREAT',
-	O_EXCL      : 'O_EXCL',
-	O_NOCTTY    : 'O_NOCTTY',
-	O_TRUNC     : 'O_TRUNC',
-	O_APPEND    : 'O_APPEND',
-	O_NONBLOCK  : 'O_NONBLOCK',
-	O_DSYNC     : 'O_DSYNC',
+	os.O_RDONLY    : 'O_RDONLY',
+	os.O_WRONLY    : 'O_WRONLY',
+	os.O_RDWR      : 'O_RDWR',
+	os.O_CREAT     : 'O_CREAT',
+	os.O_EXCL      : 'O_EXCL',
+	os.O_NOCTTY    : 'O_NOCTTY',
+	os.O_TRUNC     : 'O_TRUNC',
+	os.O_APPEND    : 'O_APPEND',
+	os.O_NONBLOCK  : 'O_NONBLOCK',
+	os.O_DSYNC     : 'O_DSYNC',
 	# FASYNC      : 'FASYNC',
-	O_DIRECT    : 'O_DIRECT',
-	O_LARGEFILE : 'O_LARGEFILE',
-	O_DIRECTORY : 'O_DIRECTORY',
-	O_NOFOLLOW  : 'O_NOFOLLOW',
-	O_NOATIME   : 'O_NOATIME',
-	O_CLOEXEC   : 'O_CLOEXEC',
-	O_PATH      : 'O_PATH',
+	os.O_DIRECT    : 'O_DIRECT',
+	# os.O_LARGEFILE : 'O_LARGEFILE', # os.O_LARGEFILE == 0 and it will be included into ANY flags! 
+	os.O_DIRECTORY : 'O_DIRECTORY',
+	os.O_NOFOLLOW  : 'O_NOFOLLOW',
+	os.O_NOATIME   : 'O_NOATIME',
+	os.O_CLOEXEC   : 'O_CLOEXEC',
+	os.O_PATH      : 'O_PATH',
+    os.O_TMPFILE   : 'O_TMPFILE',
 }
 
 def openflags2expr(flags: int) -> Expression:
     # check: if any bit of "e" is 1, then it has been translated
     assert (flags & ~(reduce(lambda x, y: (x | y), OpenFlags.keys(), 0))) == 0
-    assert O_RDONLY == 0
-    if (flags & O_WRONLY) != 0:
-        e = OpenFlags[O_WRONLY]
-    elif (flags & O_RDWR) != 0:
-        e = OpenFlags[O_RDWR]
+
+    # lower 2 bits of flags have special meaning
+    assert os.O_RDONLY == 0
+    if (flags & (os.O_WRONLY | os.O_RDWR)) == (os.O_WRONLY | os.O_RDWR):
+        e = OpenFlags[os.O_RDWR]
+        flags1 = flags & ~os.O_WRONLY & ~os.O_RDWR
+    if (flags & os.O_WRONLY) != 0:
+        e = OpenFlags[os.O_WRONLY]
+        flags1 = flags & ~os.O_WRONLY
+    elif (flags & os.O_RDWR) != 0:
+        e = OpenFlags[os.O_RDWR]
+        flags1 = flags & ~os.O_RDWR
     else:
-        e = OpenFlags[O_RDONLY]
-    e = e + (''.join([' | ' + OpenFlags[f] for f in OpenFlags if (flags & f) != 0]))
+        e = OpenFlags[os.O_RDONLY]
+        flags1 = flags
+
+    e = e + (''.join([' | ' + OpenFlags[f] for f in OpenFlags
+                      if (flags1 & f) == f and f not in {os.O_RDONLY, os.O_WRONLY, os.O_RDWR}]))
     return Expression(e)
 
 XattrFlags = {
-    XATTR_CREATE: 'XATTR_CREATE',
-    XATTR_REPLACE: 'XATTR_REPLACE',
+    os.XATTR_CREATE: 'XATTR_CREATE',
+    os.XATTR_REPLACE: 'XATTR_REPLACE',
 }
 
 def xattrflags2expr(flags: int) -> Expression:
