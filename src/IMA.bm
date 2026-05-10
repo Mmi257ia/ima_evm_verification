@@ -74,8 +74,8 @@ events
 
     event open_create extends open_create
       any
-        contentHash // -
-        metaHash // -
+        contentHash // - // проставить какие-нибудь нолики в медиаторе -- этот параметр нужен только из-за того, что для каждого файла должен быть хеш в отображении ContentHash
+        metaHash // - // аналогично для EVM
       where
         @grd28: contentHash ∈ HASHES
         @grd29: metaHash ∈ HASHES
@@ -96,7 +96,7 @@ events
 
     event openat_create extends openat_create
       any
-        contentHash // -
+        contentHash // - // см. open_create
         metaHash // -
       where
         @grd34: contentHash ∈ HASHES
@@ -118,8 +118,8 @@ events
 
     event mkdir extends mkdir // TODO: add support for mkdirat?
       any
-        contentHash // -
-        metaHash // -
+        contentHash // - // ??? по моим наблюдениям, хеши для директорий вообще не должны считаться; можно в медиаторе нолики проставлятьё
+        metaHash // - // ???
       where
         @grd18: contentHash ∈ HASHES
         @grd19: metaHash ∈ HASHES
@@ -131,7 +131,7 @@ events
 
     event chmod extends chmod
       any
-        metaHash // -
+        metaHash // - // вытаскивать из монитора
       where
         @grd8: metaHash ∈ HASHES
         @grd9: file ∉ ImmutableFiles
@@ -142,7 +142,7 @@ events
 
     event fchmod extends fchmod
       any
-        metaHash // -
+        metaHash // - // вытаскивать из монитора
       where
         @grd8: metaHash ∈ HASHES
         @grd9: DACPermissions(FDFile(fd)) = perms ⇔ MetaHash(FDFile(fd)) = metaHash
@@ -152,7 +152,7 @@ events
 
     event fchmodat extends fchmodat
       any
-        metaHash // -
+        metaHash // - // вытаскивать из монитора
       where
         @grd12: metaHash ∈ HASHES
         @grd13: file ∉ ImmutableFiles
@@ -163,7 +163,7 @@ events
 
     event chown extends chown
       any
-        metaHash // -
+        metaHash // - // вытаскивать из монитора
       where
         @grd12: metaHash ∈ HASHES
         @grd13: file ∉ ImmutableFiles
@@ -174,7 +174,7 @@ events
 
     event fchown extends fchown
       any
-        metaHash // -
+        metaHash // - // вытаскивать из монитора
       where
         @grd12: metaHash ∈ HASHES
         @grd13: (FileUser(FDFile(fd)) = owner ∧ FileGroup(FDFile(fd)) = group) ⇔ MetaHash(FDFile(fd)) = metaHash
@@ -184,7 +184,7 @@ events
 
     event fchownat extends fchownat
       any
-        metaHash // -
+        metaHash // - // вытаскивать из монитора
       where
         @grd16: metaHash ∈ HASHES
         @grd17: file ∉ ImmutableFiles
@@ -216,8 +216,8 @@ events
 
     event symlink extends symlink // TODO: add basic symlink support to other syscalls
       any
-        contentHash // -
-        metaHash // -
+        contentHash // - // вытаскивать из монитора (наверное)
+        metaHash // - // вытаскивать из монитора (наверное)
       where
         @grd14: contentHash ∈ HASHES
         @grd15: metaHash ∈ HASHES
@@ -241,10 +241,10 @@ events
 
     event close extends close
       any
-        imaHash // -
-        evmHash // -
-        contentHash
-        metaHash
+        imaHash // - // это как бы "старый хеш", который проставляет медиатор на основании того, что было известно _до_ этого вызова
+        evmHash // - // аналогично imaHash
+        contentHash // вытаскивать из монитора
+        metaHash // вытаскивать из монитора
       where
         @grd6: imaHash ∈ HASHES
         @grd7: evmHash ∈ HASHES
