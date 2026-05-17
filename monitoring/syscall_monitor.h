@@ -5,9 +5,24 @@
 #define XNAME_SIZE 128
 #define XVALUE_SIZE 128
 
+
+#define HASH_MAX_DIGESTSIZE	 64
 #ifndef TASK_COMM_LEN
 #define TASK_COMM_LEN 16
 #endif
+
+#define XATTR_SECURITY_PREFIX	"security."
+
+#define XATTR_EVM_SUFFIX "evm"
+#define XATTR_NAME_EVM XATTR_SECURITY_PREFIX XATTR_EVM_SUFFIX
+
+#define XATTR_IMA_SUFFIX "ima"
+#define XATTR_NAME_IMA XATTR_SECURITY_PREFIX XATTR_IMA_SUFFIX
+
+struct ima_data {
+    __u8 value[HASH_MAX_DIGESTSIZE];
+    __u64 size;
+};
 
 struct syscall_event {
     __u64 ts;
@@ -98,6 +113,7 @@ struct syscall_event {
         } fchown;
         struct {
             unsigned int fd;
+            struct ima_data ima_hash;
         } close;
         struct {
             int mask;

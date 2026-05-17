@@ -133,6 +133,13 @@ static inline bool is_string(const uint8_t *buf, size_t len)
 
 char base64_xattr[(field_size(struct getxattr, value) + 2) / 3 * 4 + 1];
 
+static void hex_encode(const uint8_t *src, size_t len, char *dst)
+{
+    for (size_t i = 0; i < len; i++)
+        sprintf(dst + i*2, "%02x", src[i]);
+    dst[len*2] = '\0';
+}
+
 #define sys_entry(e) [SYS_##e] = #e
 static const char *syscall_names[500] = {
     sys_entry(open),     sys_entry(openat),     sys_entry(creat),
@@ -149,6 +156,8 @@ static const char *syscall_names[500] = {
 static int handle_event(void *ctx, void *data, size_t len)
 {
     struct syscall_event *e = data;
+    char content_hash_hex[129];
+        content_hash_hex[0] = 0;
 
     printf("{ \"syscall\": \"%s\", \"proc\": \"%s\", \"pid\": %d, \"euid\": %d, \"egid\": %d, ",
         syscall_names[e->syscall_nr], e->comm,
@@ -227,9 +236,11 @@ static int handle_event(void *ctx, void *data, size_t len)
             e->fchown.fd, e->fchown.owner,
             e->fchown.group, e->fchown.perms);
         break;
-    case SYS_close: printf(
-            "\"fd\": %u,",
-            e->close.fd);
+    case SYS_close: 
+        hex_encode(e->close.ima_hash.value, e->close.ima_hash.size, content_hash_hex);
+        printf(
+            "\"fd\": %u, \"hash\": \"%s\",",
+            e->close.fd, content_hash_hex);
         break;
     case SYS_umask: printf(
             "\"mask\": %d,",
@@ -438,7 +449,7 @@ run(int argc, char *argv[])
     struct monitor_config cfg = {0};
     __u32 key = 0;
     cfg.enabled = 1;
-    cfg.filter_tst = 1;
+    cfg.filter_tst = 0;
     bpf_map_update_elem(cfg_fd, &key, &cfg, BPF_ANY);
 
     int events_fd;

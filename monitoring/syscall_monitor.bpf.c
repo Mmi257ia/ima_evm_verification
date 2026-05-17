@@ -79,6 +79,13 @@ struct {
     __type(value, struct chmod_data);
 } chmod_data_map SEC(".maps");
 
+struct {
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(max_entries, 10240);
+    __type(key, u64);
+    __type(value, struct ima_data);
+} ima_data_map SEC(".maps");
+
 struct chown_ctx {
     struct path *path;
 };
@@ -113,6 +120,17 @@ struct {
 } execve_map SEC(".maps");
 
 
+static __always_inline int
+bpf_memcmp(const void *a, const void *b, size_t len) {
+    const unsigned char *pa = (const unsigned char *)a;
+    const unsigned char *pb = (const unsigned char *)b;
+    for (size_t i = 0; i < len; i++) {
+        if (pa[i] != pb[i])
+            return (int)pa[i] - (int)pb[i];
+    }
+    return 0;
+}
+
 static __always_inline int should_monitor(void)
 {
     u32 key = 0;
@@ -144,6 +162,32 @@ int BPF_KPROBE(handle_chmod_common)
     data.path = (struct path *)PT_REGS_PARM1(ctx);
     bpf_map_update_elem(&chmod_map, &id, &data, BPF_ANY);
     bpf_printk("kprobe/chmod_common: %llu", id);
+
+    return 0;
+}
+
+// TODO: maybe we should track calculation hash instead set hash
+SEC("kprobe/__vfs_setxattr_noperm")
+int BPF_KPROBE(handle_vfs_setxattr_noperm)
+{
+    if (!should_monitor()) {
+        return 0;
+    }    
+
+    char name_buf[32];
+    const char *name_ptr = (const char *)PT_REGS_PARM3(ctx);
+    bpf_probe_read_kernel_str(name_buf, sizeof(name_buf), name_ptr);
+    if (bpf_memcmp(name_buf, XATTR_NAME_IMA, sizeof(XATTR_NAME_IMA)) != 0)
+        return 0;
+    u64 id = bpf_get_current_pid_tgid();
+
+    struct ima_data data = {};
+    data.size = (__u64) PT_REGS_PARM5(ctx);
+    const void *value_ptr = (const void *) PT_REGS_PARM4(ctx);
+    bpf_probe_read_kernel(&data.value, sizeof(data.value), value_ptr);
+    
+    bpf_map_update_elem(&ima_data_map, &id, &data, BPF_ANY);
+    bpf_printk("kprobe/__vfs_setxattr_noperm: %llu", id);
 
     return 0;
 }
@@ -759,6 +803,21 @@ int trace_exit_close(struct trace_event_raw_sys_exit *ctx)
     }
 
     e->close.fd = e->args[0];
+    e->close.ima_hash.size = 0;
+    e->close.ima_hash.value[0] = 0;
+
+    u64 pid_tgid = bpf_get_current_pid_tgid();
+
+    struct ima_data *ima_data;
+    if (!(ima_data = bpf_map_lookup_elem(&ima_data_map, &pid_tgid))) {
+        bpf_printk("close without saved ima data");
+        goto END;
+    }
+
+    __builtin_memcpy(&e->close.ima_hash, ima_data, sizeof(e->close.ima_hash));
+
+    bpf_map_delete_elem(&ima_data_map, &pid_tgid);
+END:
     bpf_ringbuf_submit(e, 0);
     return 0;
 }
