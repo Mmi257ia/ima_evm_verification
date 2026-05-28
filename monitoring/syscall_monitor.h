@@ -20,8 +20,8 @@
 #define XATTR_NAME_IMA XATTR_SECURITY_PREFIX XATTR_IMA_SUFFIX
 
 struct ima_data {
-    __u8 value[HASH_MAX_DIGESTSIZE];
     __u64 size;
+    __u8 value[HASH_MAX_DIGESTSIZE];
 };
 
 struct syscall_event {

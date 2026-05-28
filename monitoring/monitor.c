@@ -156,8 +156,8 @@ static const char *syscall_names[500] = {
 static int handle_event(void *ctx, void *data, size_t len)
 {
     struct syscall_event *e = data;
-    char content_hash_hex[129];
-        content_hash_hex[0] = 0;
+    char ima_hash_hex[129];
+    ima_hash_hex[0] = '\0';
 
     printf("{ \"syscall\": \"%s\", \"proc\": \"%s\", \"pid\": %d, \"euid\": %d, \"egid\": %d, ",
         syscall_names[e->syscall_nr], e->comm,
@@ -237,10 +237,10 @@ static int handle_event(void *ctx, void *data, size_t len)
             e->fchown.group, e->fchown.perms);
         break;
     case SYS_close: 
-        hex_encode(e->close.ima_hash.value, e->close.ima_hash.size, content_hash_hex);
+        hex_encode(e->close.ima_hash.value, e->close.ima_hash.size, ima_hash_hex);
         printf(
-            "\"fd\": %u, \"hash\": \"%s\",",
-            e->close.fd, content_hash_hex);
+            "\"fd\": %u, \"ima_hash\": \"%s\", \"ima_hash_len\": \"%llu\"",
+            e->close.fd, ima_hash_hex, e->close.ima_hash.size);
         break;
     case SYS_umask: printf(
             "\"mask\": %d,",

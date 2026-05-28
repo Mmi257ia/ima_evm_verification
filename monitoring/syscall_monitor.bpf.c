@@ -79,6 +79,17 @@ struct {
     __type(value, struct chmod_data);
 } chmod_data_map SEC(".maps");
 
+struct ima_ctx {
+    struct integrity_iint_cache *iint_cache;
+};
+
+struct {
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(max_entries, 10240);
+    __type(key, u64);
+    __type(value, struct ima_ctx);
+} ima_ctx_map SEC(".maps");
+
 struct {
     __uint(type, BPF_MAP_TYPE_HASH);
     __uint(max_entries, 10240);
@@ -149,6 +160,93 @@ static __always_inline int should_monitor(void)
     return *(u32 *)prefix == comm[0]; // comm starts with "tst_"
 }
 
+//TODO: maybe we should track calculation hash instead set hash
+// SEC("kprobe/__vfs_setxattr_noperm")
+// int BPF_KPROBE(handle_vfs_setxattr_noperm)
+// {
+//     if (!should_monitor()) {
+//         return 0;
+//     }    
+
+//     char name_buf[32];
+//     const char *name_ptr = (const char *)PT_REGS_PARM3(ctx);
+//     bpf_probe_read_kernel_str(name_buf, sizeof(name_buf), name_ptr);
+//     if (bpf_memcmp(name_buf, XATTR_NAME_IMA, sizeof(XATTR_NAME_IMA)) != 0)
+//         return 0;
+//     u64 id = bpf_get_current_pid_tgid();
+
+//     struct ima_data data = {};
+//     data.size = (__u64) PT_REGS_PARM5(ctx);
+//     const void *value_ptr = (const void *) PT_REGS_PARM4(ctx);
+//     bpf_probe_read_kernel(&data.value, sizeof(data.value), value_ptr);
+    
+//     bpf_map_update_elem(&ima_data_map, &id, &data, BPF_ANY);
+//     bpf_printk("kprobe/__vfs_setxattr_noperm: %llu", id);
+
+//     return 0;
+// }
+
+SEC("kprobe/ima_collect_measurement")
+int BPF_KPROBE(handle_ima_collect_measurement)
+{
+    if (!should_monitor()) {
+        return 0;
+    }
+
+    u64 id = bpf_get_current_pid_tgid();
+
+    struct ima_ctx data = {};
+    data.iint_cache = (struct integrity_iint_cache *)PT_REGS_PARM1(ctx);
+
+    bpf_map_update_elem(&ima_ctx_map, &id, &data, BPF_ANY);
+
+    return 0;
+}
+
+SEC("kretprobe/ima_collect_measurement")
+int BPF_KRETPROBE(handle_ima_collect_measurement_ret) {
+    if (!should_monitor()) {
+        return 0;
+    }
+    bpf_printk("ima_collect_measurement_ret!");
+
+    u64 id = bpf_get_current_pid_tgid();
+
+    struct ima_ctx *ictx;
+    if (!(ictx = bpf_map_lookup_elem(&ima_ctx_map, &id))) {
+        bpf_printk("ima_collect_measurement_ret: no ima_ctx found");
+        return 0;
+    }
+
+    long ret = PT_REGS_RC(ctx);
+    if (ret < 0) {
+        goto CLEANUP;
+    }
+
+    struct integrity_iint_cache *iint_cache = ictx->iint_cache;
+    struct ima_digest_data *ima_hash = BPF_CORE_READ(iint_cache, ima_hash);
+    
+    struct ima_data data = {};
+    data.size = BPF_CORE_READ(ima_hash, length);
+    //const void *value_ptr = (const void *)BPF_CORE_READ(ima_hash, digest);
+
+    __u32 offset = offsetof(struct ima_digest_data, digest);
+    const void *value_ptr = (const void *)((__u64)ima_hash + offset);
+    
+    if (data.size > HASH_MAX_DIGESTSIZE) {
+        bpf_printk("ima_collesct_measurement_ret: digest size (%llu) "
+            "is more that the maximum one (%d)", data.size, HASH_MAX_DIGESTSIZE);
+        goto CLEANUP;
+    }
+    bpf_probe_read_kernel(&data.value, (__u32)data.size, value_ptr);
+
+    bpf_map_update_elem(&ima_data_map, &id, &data, BPF_ANY);
+
+CLEANUP:
+    bpf_map_delete_elem(&ima_ctx_map, &id);
+    return 0;
+}
+
 SEC("kprobe/chmod_common")
 int BPF_KPROBE(handle_chmod_common)
 {
@@ -162,32 +260,6 @@ int BPF_KPROBE(handle_chmod_common)
     data.path = (struct path *)PT_REGS_PARM1(ctx);
     bpf_map_update_elem(&chmod_map, &id, &data, BPF_ANY);
     bpf_printk("kprobe/chmod_common: %llu", id);
-
-    return 0;
-}
-
-// TODO: maybe we should track calculation hash instead set hash
-SEC("kprobe/__vfs_setxattr_noperm")
-int BPF_KPROBE(handle_vfs_setxattr_noperm)
-{
-    if (!should_monitor()) {
-        return 0;
-    }    
-
-    char name_buf[32];
-    const char *name_ptr = (const char *)PT_REGS_PARM3(ctx);
-    bpf_probe_read_kernel_str(name_buf, sizeof(name_buf), name_ptr);
-    if (bpf_memcmp(name_buf, XATTR_NAME_IMA, sizeof(XATTR_NAME_IMA)) != 0)
-        return 0;
-    u64 id = bpf_get_current_pid_tgid();
-
-    struct ima_data data = {};
-    data.size = (__u64) PT_REGS_PARM5(ctx);
-    const void *value_ptr = (const void *) PT_REGS_PARM4(ctx);
-    bpf_probe_read_kernel(&data.value, sizeof(data.value), value_ptr);
-    
-    bpf_map_update_elem(&ima_data_map, &id, &data, BPF_ANY);
-    bpf_printk("kprobe/__vfs_setxattr_noperm: %llu", id);
 
     return 0;
 }
