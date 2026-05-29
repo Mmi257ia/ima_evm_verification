@@ -9,6 +9,9 @@ from mediator.builder import EventsBuilder
 from mediator.state import Inode, MediatorState, ProcFD
 
 
+# here we recieve syscalls from monitor
+# TODO update inits and syscall handlers with hashes
+
 class TraceTranslator:
 
     def __init__(self, *, model_trace: ModelTraceConsumer, m: Machine,
@@ -139,7 +142,7 @@ class TraceTranslator:
             if dev is None:
                 dev = parent.dev
             file = Inode(dev, ino) if ino is not None else None
-            self._model_trace.open_create(abspath, flags, mode, parent, file, gid, perms, pid, retval)
+            self._model_trace.open_create(abspath, flags, mode, parent, file, gid, perms, pid, bytes(), bytes(), retval)
 
         # update mediator state
         if retval >= 0:
@@ -162,7 +165,7 @@ class TraceTranslator:
         if dev is None:
             dev = parent.dev
         file = Inode(dev, ino) if ino is not None else None
-        self._model_trace.creat(abspath, mode, parent, file, gid, perms, pid, retval)
+        self._model_trace.creat(abspath, mode, parent, file, gid, perms, pid, bytes(), bytes(), retval)
 
         # update mediator state
         if retval >= 0:
@@ -196,7 +199,7 @@ class TraceTranslator:
             if dev is None:
                 dev = parent.dev
             file = Inode(dev, ino) if ino is not None else None
-            self._model_trace.openat_create(dfd, pathname, flags, mode, parent, file, gid, perms, cwd, pid, retval)
+            self._model_trace.openat_create(dfd, pathname, flags, mode, parent, file, gid, perms, cwd, pid, bytes(), bytes(), retval)
 
         # update mediator state
         if retval >= 0:            
@@ -219,7 +222,7 @@ class TraceTranslator:
         if dev is None:
             dev = parent.dev
         folder = Inode(dev, ino) if ino is not None else None
-        self._model_trace.mkdir(pathname, mode, parent, folder, gid, perms, pid, retval)
+        self._model_trace.mkdir(pathname, mode, parent, folder, gid, perms, pid, bytes(), bytes(), retval)
 
         # update mediator state
         if retval >= 0:
@@ -230,13 +233,13 @@ class TraceTranslator:
             self.mediator_state.do_mkdir(abspath, folder, uid, gid, perms)
 
     def chmod(self, pathname: str, mode: int, pid: int,
-              perms: Optional[int], retval: int):
+              perms: Optional[int], meta_hash: bytes, retval: int):
 
         # append model trace
         abspath = self.mediator_state.normalize(pathname, pid)
         parent = self.mediator_state.get_ino(dirname(abspath))
         file = self.mediator_state.get_ino(abspath)
-        self._model_trace.chmod(pathname, mode, parent, file, perms, pid, retval)
+        self._model_trace.chmod(pathname, mode, parent, file, perms, pid, meta_hash, retval)
 
         # update mediator state
         if retval >= 0:
@@ -244,10 +247,10 @@ class TraceTranslator:
             self.mediator_state.do_chmod(file, perms)
 
     def fchmod(self, fd: int, mode: int, pid: int,
-               perms: Optional[int], retval: int):
+               perms: Optional[int], meta_hash: bytes, retval: int):
 
         # append model trace
-        self._model_trace.fchmod(fd, mode, perms, pid, retval)
+        self._model_trace.fchmod(fd, mode, perms, pid, meta_hash, retval)
 
         # update mediator state
         if retval >= 0:
@@ -256,7 +259,7 @@ class TraceTranslator:
             self.mediator_state.do_chmod(file, perms)
 
     def chown(self, pathname: str, owner: int, group: int, pid: int,
-              perms: Optional[int], retval: int):
+              perms: Optional[int], meta_hash: bytes, retval: int):
 
         # append model trace
         abspath = self.mediator_state.normalize(pathname, pid)
@@ -264,7 +267,7 @@ class TraceTranslator:
         file = self.mediator_state.get_ino(abspath)
         pre_uid = self.mediator_state.do_stat(file).st_uid
         pre_gid = self.mediator_state.do_stat(file).st_gid
-        self._model_trace.chown(pathname, owner, group, pre_uid, pre_gid, parent, file, perms, pid, retval)
+        self._model_trace.chown(pathname, owner, group, pre_uid, pre_gid, parent, file, perms, pid, meta_hash, retval)
 
         # update mediator state
         if retval >= 0:
@@ -273,13 +276,13 @@ class TraceTranslator:
             self.mediator_state.do_chmod(file, perms)
 
     def fchown(self, fd: int, owner: int, group: int, pid: int,
-               perms: Optional[int], retval: int):
+               perms: Optional[int], meta_hash: bytes, retval: int):
         
         # append model trace
         file = self.mediator_state.get_ino_of_fd(ProcFD(pid, fd))
         pre_uid = self.mediator_state.do_stat(file).st_uid
         pre_gid = self.mediator_state.do_stat(file).st_gid
-        self._model_trace.fchown(fd, owner, group, pre_uid, pre_gid, perms, pid, retval)
+        self._model_trace.fchown(fd, owner, group, pre_uid, pre_gid, perms, pid, meta_hash, retval)
 
         # update mediator state
         if retval >= 0:
@@ -345,7 +348,7 @@ class TraceTranslator:
             self.mediator_state.do_link(absoldpath, absnewpath)
 
     def symlink(self, target: str, linkpath: str, pid: int,
-                dev: Optional[int], ino: Optional[int], retval: int):
+                dev: Optional[int], ino: Optional[int], content_hash: bytes, meta_hash: bytes, retval: int):
         
         # append model trace
         abstarget = self.mediator_state.normalize(target, pid)
@@ -355,7 +358,7 @@ class TraceTranslator:
         if dev is None:
             dev = parent.dev
         file = Inode(dev, ino) if ino is not None else None
-        self._model_trace.symlink(target, linkpath, target_parent, parent, file, pid, retval)
+        self._model_trace.symlink(target, linkpath, target_parent, parent, file, pid, content_hash, meta_hash, retval)
 
         # update mediator state
         # symlink is partially supported by model
@@ -373,11 +376,15 @@ class TraceTranslator:
         fds = set[int]() # O_CLOEXEC is not modelled yet
         self._model_trace.execve(pathname, argv, envp, fds, parent, exeFile, pid, retval)
 
-    def close(self, fd: int, pid: int, retval: int):
+    def close(self, fd: int, pid: int, content_hash: bytes, meta_hash: bytes, retval: int):
 
         # append model trace
-        fds = [ProcFD(pid, fd,)] if all(p == pid for (p, pfd) in self.mediator_state.fd2ino if pfd == fd) else []
-        self._model_trace.close(fd, fds, pid, retval)
+        fds = [ProcFD(pid, fd,)] if all(p == pid for (p, pfd) in self.mediator_state.fd2ino if pfd == fd) else []   # why zero fds??
+
+        if fds:
+            ino = self.mediator_state.get_ino_of_fd(fds[0])
+            hashes = self.mediator_state.get_ima_evm_hash(ino)
+        self._model_trace.close(fd, fds, pid, hashes.content_hash, hashes.meta_hash, content_hash, meta_hash, retval)
 
         # update mediator state
         if retval >= 0:
