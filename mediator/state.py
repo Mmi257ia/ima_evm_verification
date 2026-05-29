@@ -10,6 +10,10 @@ class ProcFD(NamedTuple):
     proc: int
     fd: int
 
+class FileHash(NamedTuple):
+    content_hash: bytes
+    meta_hash: bytes
+
 @dataclass
 class FileStat:
     st_uid: int
@@ -25,6 +29,8 @@ class MediatorState:
         self.path2ino = {'/': root} # path |-> (dev, ino)
         self.fd2ino = dict[ProcFD, Inode]()  # (proc, fd) |-> (dev, ino)
         self.stats = dict[Inode, FileStat]() # (dev, ino) |-> stat
+        # self.real_hash = dict[Inode, FileHash]()  # (dev, ino) |-> (content_hash, meta_hash)
+        self.ima_evm_hash = dict[Inode, FileHash]()  # (dev, ino) |-> (ima_hash, evm_hash)
 
     def do_getcwd(self, proc: int) -> str:
         if proc == 0:
@@ -110,6 +116,9 @@ class MediatorState:
     
     def get_path(self, file: Inode) -> str:
         return next(path for path, ino in self.path2ino.items() if ino == file)
+    
+    def get_ima_evm_hash(self, file: Inode) -> FileHash:
+        return self.ima_evm_hash[file]
 
     def do_stat(self, ino: Inode) -> FileStat:
         return self.stats[ino]
