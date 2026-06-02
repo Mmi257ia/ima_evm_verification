@@ -10,7 +10,7 @@ from mediator.state import Inode, MediatorState, ProcFD
 
 
 # here we recieve syscalls from monitor
-# TODO update inits and syscall handlers with hashes
+# TODO update inits with real hashes
 
 class TraceTranslator:
 
@@ -20,6 +20,8 @@ class TraceTranslator:
         self._model_trace = EventsBuilder(model_trace=model_trace, m=m,
                                           root_dev=root_dev, root_ino=root_ino,
                                           root_uid=root_uid, root_gid=root_gid)
+        # TODO need to pass concrete root and exe hashes somehow all the way down into Data Translator
+        # to match them with model constants
 
         self.mediator_state = MediatorState(Inode(root_dev, root_ino))
 
@@ -40,9 +42,9 @@ class TraceTranslator:
         folder = Inode(dev, ino,)
         self.mediator_state.do_mkdir(path, folder, uid, gid, perms)
         parent = self.mediator_state.get_ino(dirname(path))
-        self._model_trace.mkdir(path, 0o777, parent, folder, 0, 0o777, 0, 0, skip_coverage=True)
-        self._model_trace.chown(path, uid, gid, 0, 0, parent, folder, 0o777, 0, 0, skip_coverage=True)
-        self._model_trace.chmod(path, perms, parent, folder, perms, 0, 0, skip_coverage=True)
+        self._model_trace.mkdir(path, 0o777, parent, folder, 0, 0o777, 0, bytes(), bytes(), 0, skip_coverage=True)
+        self._model_trace.chown(path, uid, gid, 0, 0, parent, folder, 0o777, 0, bytes(), 0, skip_coverage=True)
+        self._model_trace.chmod(path, perms, parent, folder, perms, 0, bytes(), 0, skip_coverage=True)
 
 
     def set_xattrs_init_file(self, *, path: str, xattrs: dict[str, str]):
@@ -70,10 +72,10 @@ class TraceTranslator:
             self._model_trace.link(oldpath, path, oldParent, file, parent, 0, 0, skip_coverage=True)
         else:
             self.mediator_state.do_creat(path, file, uid, gid, perms)
-            self._model_trace.creat(path, 0o777, parent, file, 0, 0o777, 0, 3, skip_coverage=True)
-            self._model_trace.close(3, [ProcFD(0, 3)], 0, 0, skip_coverage=True)
-            self._model_trace.chown(path, uid, gid, 0, 0, parent, file, 0o777, 0, 0, skip_coverage=True)
-            self._model_trace.chmod(path, perms, parent, file, perms, 0, 0, skip_coverage=True)
+            self._model_trace.creat(path, 0o777, parent, file, 0, 0o777, 0, bytes(), bytes(), 3, skip_coverage=True)
+            self._model_trace.close(3, [ProcFD(0, 3)], 0, bytes(), bytes(), bytes(), bytes(), 0, skip_coverage=True)
+            self._model_trace.chown(path, uid, gid, 0, 0, parent, file, 0o777, 0, bytes(), 0, skip_coverage=True)
+            self._model_trace.chmod(path, perms, parent, file, perms, 0, bytes(), 0, skip_coverage=True)
 
     def set_init_acl(self, *, data: list[tuple[str, list[str]]]):
 
@@ -381,6 +383,7 @@ class TraceTranslator:
         # append model trace
         fds = [ProcFD(pid, fd,)] if all(p == pid for (p, pfd) in self.mediator_state.fd2ino if pfd == fd) else []   # why zero fds??
 
+        # TODO fix this
         if fds:
             ino = self.mediator_state.get_ino_of_fd(fds[0])
             hashes = self.mediator_state.get_ima_evm_hash(ino)
