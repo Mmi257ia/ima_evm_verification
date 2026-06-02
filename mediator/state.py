@@ -118,7 +118,7 @@ class MediatorState:
         return next(path for path, ino in self.path2ino.items() if ino == file)
     
     def get_ima_evm_hash(self, file: Inode) -> FileHash:
-        return self.ima_evm_hash[file]
+        return self.ima_evm_hash.get(file, FileHash(bytes(), bytes()))  # returns default if no ima/evm strings are stored
 
     def do_stat(self, ino: Inode) -> FileStat:
         return self.stats[ino]
