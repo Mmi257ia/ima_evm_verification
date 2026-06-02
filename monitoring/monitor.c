@@ -132,6 +132,7 @@ static inline bool is_string(const uint8_t *buf, size_t len)
 #define field_size(type, member) sizeof(((type *)0)->member)
 
 char base64_xattr[(field_size(struct getxattr, value) + 2) / 3 * 4 + 1];
+char hex_xattr[field_size(struct getxattr, value) * 2 + 1];
 
 static void hex_encode(const uint8_t *src, size_t len, char *dst)
 {
@@ -298,8 +299,8 @@ static int handle_event(void *ctx, void *data, size_t len)
                 decoded_value = raw;
             }
         } else {
-            fprintf(stderr, "Unknown value format in getxattr\n");
-            abort();
+            hex_encode(raw_value, size, hex_xattr);
+            decoded_value = hex_xattr;
         }
 
         printf(
