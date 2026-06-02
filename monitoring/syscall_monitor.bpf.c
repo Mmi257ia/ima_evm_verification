@@ -131,16 +131,16 @@ struct {
 } execve_map SEC(".maps");
 
 
-static __always_inline int
-bpf_memcmp(const void *a, const void *b, size_t len) {
-    const unsigned char *pa = (const unsigned char *)a;
-    const unsigned char *pb = (const unsigned char *)b;
-    for (size_t i = 0; i < len; i++) {
-        if (pa[i] != pb[i])
-            return (int)pa[i] - (int)pb[i];
-    }
-    return 0;
-}
+// static __always_inline int
+// bpf_memcmp(const void *a, const void *b, size_t len) {
+//     const unsigned char *pa = (const unsigned char *)a;
+//     const unsigned char *pb = (const unsigned char *)b;
+//     for (size_t i = 0; i < len; i++) {
+//         if (pa[i] != pb[i])
+//             return (int)pa[i] - (int)pb[i];
+//     }
+//     return 0;
+// }
 
 static __always_inline int should_monitor(void)
 {
@@ -161,6 +161,7 @@ static __always_inline int should_monitor(void)
 }
 
 //TODO: maybe we should track calculation hash instead set hash
+
 // SEC("kprobe/__vfs_setxattr_noperm")
 // int BPF_KPROBE(handle_vfs_setxattr_noperm)
 // {

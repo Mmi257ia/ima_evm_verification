@@ -93,27 +93,32 @@ struct syscall_event {
             char pathname[PATH_SIZE];
             __u32 mode;
             __u32 perms;
+            struct ima_data evm_hash;
         } chmod;
         struct {
             int fd;
             __u32 mode;
             __u32 perms;
+            struct ima_data evm_hash;
         } fchmod;
         struct {
             char pathname[PATH_SIZE];
             __u32 owner;
             __u32 group;
             __u32 perms;
+            struct ima_data evm_hash;
         } chown;
         struct {
             int fd;
             __u32 owner;
             __u32 group;
             __u32 perms;
+            struct ima_data evm_hash;
         } fchown;
         struct {
             unsigned int fd;
             struct ima_data ima_hash;
+            struct ima_data evm_hash;
         } close;
         struct {
             int mask;
@@ -136,6 +141,8 @@ struct syscall_event {
         struct {
             char oldname[PATH_SIZE];
             char newname[PATH_SIZE];
+            struct ima_data ima_hash;
+            struct ima_data evm_hash;
         } symlink;
         struct getxattr {
             char pathname[PATH_SIZE];
