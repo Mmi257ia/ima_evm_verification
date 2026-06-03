@@ -138,10 +138,14 @@ class TraceTranslator:
         self._model_trace.set_acl(userACL, groupACL, groupObjACL, maskACL, dacPermissions)
 
     def set_init_ima_mode(self, *, ima_mode: str):
-        self._model_trace.switch_ima_mode(ImaEvmMode[ima_mode])
+        mode = ImaEvmMode[ima_mode]
+        self._model_trace.switch_ima_mode(mode)
+        self.mediator_state.do_switch_ima_mode(mode)
     
     def set_init_evm_mode(self, *, evm_mode: str):
-        self._model_trace.switch_evm_mode(ImaEvmMode[evm_mode])        # TODO not safe
+        mode = ImaEvmMode[evm_mode]
+        self._model_trace.switch_evm_mode(mode)        # TODO not safe
+        self.mediator_state.do_switch_evm_mode(mode)
 
     def login(self, *, uid: int, gid: int, pid: int, exeFile: str, umask: int):
         exeFile_ino = self.mediator_state.get_ino(exeFile)

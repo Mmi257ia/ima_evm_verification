@@ -35,6 +35,8 @@ class MediatorState:
         self.path2ino = {'/': root} # path |-> (dev, ino)
         self.fd2ino = dict[ProcFD, Inode]()  # (proc, fd) |-> (dev, ino)
         self.stats = dict[Inode, FileStat]() # (dev, ino) |-> stat
+        self.ima_mode: ImaEvmMode = ImaEvmMode.OFF
+        self.evm_mode: ImaEvmMode = ImaEvmMode.OFF
         # self.real_hash = dict[Inode, FileHash]()  # (dev, ino) |-> (content_hash, meta_hash)
         self.ima_evm_hash = dict[Inode, FileHash]()  # (dev, ino) |-> (ima_hash, evm_hash)
 
@@ -101,6 +103,12 @@ class MediatorState:
         del self.path2ino[path]
         if ino not in self.fd2ino.values() and ino not in self.path2ino.values():
             del self.stats[ino]
+
+    def do_switch_ima_mode(self, ima_mode: ImaEvmMode):
+        self.ima_mode = ima_mode
+    
+    def do_switch_evm_mode(self, evm_mode: ImaEvmMode):
+        self.evm_mode = evm_mode
     
     def do_exists(self, path: str) -> bool:
         if not isabs(path):
