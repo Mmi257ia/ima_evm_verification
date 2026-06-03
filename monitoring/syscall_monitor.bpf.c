@@ -846,6 +846,18 @@ int trace_exit_chmod(struct trace_event_raw_sys_exit *ctx)
 
     bpf_map_delete_elem(&chmod_data_map, &pid_tgid);
 
+    struct ima_data *evm_data;
+    if (!(evm_data = bpf_map_lookup_elem(&evm_data_map, &pid_tgid))) {
+        bpf_printk("chmod without saved evm data");
+        goto END;
+    }
+
+    __builtin_memcpy(&e->chmod.evm_hash, evm_data, sizeof(e->chmod.evm_hash));
+
+    bpf_map_delete_elem(&evm_data_map, &pid_tgid);
+
+    bpf_printk("chmod close");
+
 END:
     bpf_ringbuf_submit(e, 0);
     return 0;
@@ -881,6 +893,16 @@ int trace_exit_fchmod(struct trace_event_raw_sys_exit *ctx)
 
     e->fchmod.perms = data->i_mode;
     bpf_map_delete_elem(&chmod_data_map, &pid_tgid);
+
+        struct ima_data *evm_data;
+    if (!(evm_data = bpf_map_lookup_elem(&evm_data_map, &pid_tgid))) {
+        bpf_printk("chmod without saved evm data");
+        goto END;
+    }
+
+    __builtin_memcpy(&e->fchmod.evm_hash, evm_data, sizeof(e->fchmod.evm_hash));
+
+    bpf_map_delete_elem(&evm_data_map, &pid_tgid);
 
 END:
     bpf_ringbuf_submit(e, 0);
@@ -920,6 +942,16 @@ int trace_exit_chown(struct trace_event_raw_sys_exit *ctx)
 
     bpf_map_delete_elem(&chown_data_map, &pid_tgid);
 
+    struct ima_data *evm_data;
+    if (!(evm_data = bpf_map_lookup_elem(&evm_data_map, &pid_tgid))) {
+        bpf_printk("chown without saved evm data");
+        goto END;
+    }
+
+    __builtin_memcpy(&e->chown.evm_hash, evm_data, sizeof(e->chown.evm_hash));
+
+    bpf_map_delete_elem(&evm_data_map, &pid_tgid);
+
 END:
     bpf_ringbuf_submit(e, 0);
     return 0;
@@ -950,12 +982,22 @@ int trace_exit_fchown(struct trace_event_raw_sys_exit *ctx)
     u64 pid_tgid = bpf_get_current_pid_tgid();
     struct chown_data *data;
     if (!(data = bpf_map_lookup_elem(&chown_data_map, &pid_tgid))) {
-        bpf_printk("chmod without saved data");
+        bpf_printk("chown without saved data");
         goto END;
     }
 
     e->fchown.perms = data->i_mode;
     bpf_map_delete_elem(&chown_data_map, &pid_tgid);
+
+    struct ima_data *evm_data;
+    if (!(evm_data = bpf_map_lookup_elem(&evm_data_map, &pid_tgid))) {
+        bpf_printk("chown without saved evm data");
+        goto END;
+    }
+
+    __builtin_memcpy(&e->fchown.evm_hash, evm_data, sizeof(e->fchown.evm_hash));
+
+    bpf_map_delete_elem(&evm_data_map, &pid_tgid);
 
 END:
     bpf_ringbuf_submit(e, 0);
