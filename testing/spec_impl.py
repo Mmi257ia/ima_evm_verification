@@ -313,10 +313,12 @@ class LinuxTestSpecImpl(LinuxTestSpec):
                     yield io.StringIO(proc.stdout)
                     # yield self._PrependedStream(info, proc.stdout)
 
-                except:
+                except Exception as e:
                     # subprocess.run(['sudo', 'podman', 'stop', container_name])
+                    if isinstance(e, subprocess.CalledProcessError):
+                        print(f"Program returned code {e.returncode}:\n{e.stderr.strip()}")
                     subprocess.run(['sudo', 'podman', 'rm', '-f', container_name])
-                    raise
+                    raise e
 
             else:
 

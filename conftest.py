@@ -27,7 +27,7 @@ def loader_process(rcvc1: Connection, sndc1: Connection, rcvc2: Connection, sndc
     except EOFError:
         pass
     finally:
-        print('Unloading monitor ...', end=' ')
+        print('\nUnloading monitor ...', end=' ')
         run(['sudo', 'make', '-s', '-C', 'monitoring', 'unload'], check=True)
         print('ok')
 
