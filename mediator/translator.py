@@ -6,7 +6,7 @@ from model.machine import Machine
 from anis.model.lazy import assert_is_not_none
 from anis.stages.mediator import ModelTraceConsumer
 from mediator.builder import EventsBuilder
-from mediator.state import FileHash, Inode, MediatorState, ProcFD
+from mediator.state import Inode, MediatorState, ProcFD, FileHash
 
 
 # here we recieve syscalls from monitor
@@ -53,17 +53,12 @@ class TraceTranslator:
 
     def set_xattrs_init_file(self, *, path: str, xattrs: dict[str, str]):
 
-        ino = self.mediator_state.get_ino(path)
+        folder = self.mediator_state.get_ino(path)
         parent = self.mediator_state.get_ino(dirname(path))
         for name, value in xattrs.items():
             value_b = bytes.fromhex(value)
-            self._model_trace.setxattr(path, name, value_b, len(value_b), 0, parent, ino, 0, 0, skip_coverage=True)
-            if name == "security.ima":
-                self.mediator_state.do_set_ima_hash(ino, value_b)
-            elif name == "security.evm":
-                self.mediator_state.do_set_evm_hash(ino, value_b)
+            self._model_trace.setxattr(path, name, value_b, len(value_b), 0, parent, folder, 0, 0, skip_coverage=True)
 
-    
     # TODO pass concrete hashes?
     def add_init_file_or_link(self, *, path: str,
                       dev: int, ino: int, uid: int, gid: int, perms: int):
@@ -352,12 +347,6 @@ class TraceTranslator:
         file = self.mediator_state.get_ino(abspath)
         self._model_trace.setxattr(pathname, name, value, size, flags, parent, file, pid, retval)
 
-        # update hash cache
-        if retval >= 0:
-            if name == "security.ima":
-                self.mediator_state.do_set_ima_hash(file, value)
-            elif name == "security.evm":
-                self.mediator_state.do_set_evm_hash(file, value)
 
     def link(self, oldname: str, newname: str, pid: int, retval: int):
         
@@ -405,13 +394,15 @@ class TraceTranslator:
     def close(self, fd: int, pid: int, contentHash: bytes, metaHash: bytes, retval: int):
         # contentHash / metaHash — текущие хеши файла от монитора (ima_collect_measurement / evm)
 
-        # append model trace
-        fds = [ProcFD(pid, fd,)] if all(p == pid for (p, pfd) in self.mediator_state.fd2ino if pfd == fd) else []   # why zero fds??
-
         proc_fd = ProcFD(pid, fd)
+
+        # append model trace
+        fds = [proc_fd] if all(p == pid for (p, pfd) in self.mediator_state.fd2ino if pfd == fd) else []
+
+        # get ima/evm strings
         if proc_fd in self.mediator_state.fd2ino:
             ino = self.mediator_state.get_ino_of_fd(proc_fd)
-            stored = self.mediator_state.ima_evm_hash.get(ino, FileHash(bytes(), bytes()))
+            stored = self.mediator_state.get_ima_evm_hash(ino)
         else:
             stored = FileHash(bytes(), bytes())
         # stored.content_hash = imaHash (старый хеш из IMAHash до этого вызова)
