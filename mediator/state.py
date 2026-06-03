@@ -120,5 +120,13 @@ class MediatorState:
     def get_ima_evm_hash(self, file: Inode) -> FileHash:
         return self.ima_evm_hash.get(file, FileHash(bytes(), bytes()))  # returns default if no ima/evm strings are stored
 
+    def do_set_ima_hash(self, file: Inode, ima_hash: bytes):
+        existing = self.ima_evm_hash.get(file, FileHash(bytes(), bytes()))
+        self.ima_evm_hash[file] = FileHash(ima_hash, existing.meta_hash)
+
+    def do_set_evm_hash(self, file: Inode, evm_hash: bytes):
+        existing = self.ima_evm_hash.get(file, FileHash(bytes(), bytes()))
+        self.ima_evm_hash[file] = FileHash(existing.content_hash, evm_hash)
+
     def do_stat(self, ino: Inode) -> FileStat:
         return self.stats[ino]
