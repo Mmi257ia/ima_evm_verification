@@ -56,16 +56,19 @@ class MediatorState:
             raise ValueError('Duplicate open')
         self.fd2ino[fd] = file
     
-    def do_close(self, fd: ProcFD):
+    def do_close(self, fd: ProcFD, hashes: FileHash):
         ino = self.fd2ino[fd]
         del self.fd2ino[fd]
         if ino not in self.fd2ino.values() and ino not in self.path2ino.values():
             del self.stats[ino]
+
+        if self.evm_mode is ImaEvmMode.FIX and self.ima_mode is ImaEvmMode.FIX and hashes:     # TODO when different
+            self.ima_evm_hash[ino] = hashes
     
     def do_exit(self, proc: int):
         fds = [fd for fd in self.fd2ino if fd.proc == proc]
         for fd in fds:
-            self.do_close(fd)
+            self.do_close(fd, None)
     
     def do_creat(self, path: str, file: Inode, uid: int, gid: int, perms: int):
         if not isabs(path):
@@ -103,6 +106,11 @@ class MediatorState:
         del self.path2ino[path]
         if ino not in self.fd2ino.values() and ino not in self.path2ino.values():
             del self.stats[ino]
+        if ino in self.ima_evm_hash:
+            del self.ima_evm_hash[ino]
+
+    def do_set_integrity_hashes(self, file: Inode, hashes: FileHash):
+        self.ima_evm_hash[file] = hashes
 
     def do_switch_ima_mode(self, ima_mode: ImaEvmMode):
         self.ima_mode = ima_mode

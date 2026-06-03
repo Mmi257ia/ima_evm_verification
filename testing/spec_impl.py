@@ -435,6 +435,9 @@ class LinuxTestSpecImpl(LinuxTestSpec):
 
 
     def _replay_setup(self, snapshot: Snapshot, tt: TraceTranslator):
+        
+        tt.set_init_ima_mode(ima_mode='FIX')
+        tt.set_init_evm_mode(evm_mode='FIX')
 
         for group in snapshot.groups:
             tt.add_init_group(gid=group.gid)

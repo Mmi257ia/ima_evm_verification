@@ -50,6 +50,9 @@ class TraceTranslator:
         chmod_meta = chown_meta if (perm_bits == 0o777) else (b'\x01' if chown_meta == bytes() else bytes())
         self._model_trace.chmod(path, perms, parent, folder, perms, 0, chmod_meta, 0, skip_coverage=True)
 
+        self.mediator_state.do_set_integrity_hashes(folder, FileHash(content_hash=bytes(), meta_hash=bytes()))  
+        # TODO new meta hash is not saved as evm hash after chmod so using one after `close`
+
 
     def set_xattrs_init_file(self, *, path: str, xattrs: dict[str, str]):
 
@@ -88,6 +91,8 @@ class TraceTranslator:
             perm_bits = S_IMODE(perms)
             chmod_meta = chown_meta if (perm_bits == 0o777) else (b'\x01' if chown_meta == bytes() else bytes())
             self._model_trace.chmod(path, perms, parent, file, perms, 0, chmod_meta, 0, skip_coverage=True)
+            
+            self.mediator_state.do_set_integrity_hashes(file, FileHash(content_hash=bytes(), meta_hash=bytes()))
 
     def set_init_acl(self, *, data: list[tuple[str, list[str]]]):
 
@@ -421,7 +426,7 @@ class TraceTranslator:
 
         # update mediator state
         if retval >= 0:
-            self.mediator_state.do_close(ProcFD(pid, fd))
+            self.mediator_state.do_close(ProcFD(pid, fd), FileHash(content_hash=contentHash, meta_hash=metaHash))
         
     def exit(self, pid: int, retval: int):
 
