@@ -97,6 +97,24 @@ struct {
     __type(value, struct ima_data);
 } ima_data_map SEC(".maps");
 
+struct evm_ctx {
+    struct evm_digest *digest_ptr;
+};
+
+struct {
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(max_entries, 10240);
+    __type(key, u32);
+    __type(value, struct evm_ctx);
+} evm_ctx_map SEC(".maps");
+
+struct {
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(max_entries, 10240);
+    __type(key, u64);
+    __type(value, struct ima_data);
+} evm_data_map SEC(".maps");
+
 struct chown_ctx {
     struct path *path;
 };
@@ -187,6 +205,79 @@ static __always_inline int should_monitor(void)
 //     return 0;
 // }
 
+
+SEC("kprobe/evm_calc_hmac_or_hash")
+int BPF_KPROBE(handle_evm_calc_hmac_or_hash)
+{
+    if (!should_monitor()) {
+        return 0;
+    }
+    bpf_printk("evm_calc_hmac_or_hash!");
+
+    u64 id = bpf_get_current_pid_tgid();
+
+    struct evm_ctx ctx_data = {
+        .digest_ptr = (struct evm_digest *)ctx->r9,
+    };
+    bpf_map_update_elem(&evm_ctx_map, &id, &ctx_data, BPF_ANY);
+
+    return 0;
+}
+
+SEC("kretprobe/evm_calc_hmac_or_hash")
+int BPF_KRETPROBE(handle_evm_calc_hmac_or_hash_ret) {
+    if (!should_monitor()) {
+        return 0;
+    }
+    bpf_printk("evm_calc_hmac_or_hash_ret!");
+
+    u64 id = bpf_get_current_pid_tgid();
+
+    struct evm_ctx *ictx;
+    if (!(ictx = bpf_map_lookup_elem(&evm_ctx_map, &id))) {
+        bpf_printk("evm_calc_hmac_or_hash_ret: no evm_ctx found");
+        return 0;
+    }
+
+    long ret = PT_REGS_RC(ctx);
+    if (ret < 0) {
+        goto CLEANUP;
+    }
+
+    struct evm_digest *evm_digest_ptr = ictx->digest_ptr;
+    struct ima_digest_data hdr = BPF_CORE_READ(evm_digest_ptr, hdr);
+    
+    struct ima_data data = {};
+    data.size = BPF_CORE_READ(&hdr, length);
+    //const void *value_ptr = (const void *)BPF_CORE_READ(ima_hash, digest);
+
+    __u32 offset = offsetof(struct evm_digest, digest);
+    const void *value_ptr = (const void *)((__u64)evm_digest_ptr + offset);
+    
+    if (data.size > HASH_MAX_DIGESTSIZE) {
+        bpf_printk("evm_calc_hmac_or_hash_ret: digest size (%llu) "
+            "is more that the maximum one (%d)", data.size, HASH_MAX_DIGESTSIZE);
+        goto CLEANUP;
+    }
+    bpf_probe_read_kernel(&data.value, (__u32)data.size, value_ptr);
+
+    char hex_str[128] = {}; 
+    int pos = 0;
+    for (int i = 0; i < data.size && pos < sizeof(hex_str)-3; i++) {
+        unsigned char byte = data.value[i];
+        hex_str[pos++] = "0123456789abcdef"[byte >> 4];
+        hex_str[pos++] = "0123456789abcdef"[byte & 0x0F];
+    }
+    hex_str[pos] = '\0';
+    bpf_printk("EVM HMAC (%d): %s\n", data.size, hex_str);
+
+    bpf_map_update_elem(&evm_data_map, &id, &data, BPF_ANY);
+
+CLEANUP:
+    bpf_map_delete_elem(&evm_ctx_map, &id);
+    return 0;
+}
+
 SEC("kprobe/ima_collect_measurement")
 int BPF_KPROBE(handle_ima_collect_measurement)
 {
@@ -240,6 +331,16 @@ int BPF_KRETPROBE(handle_ima_collect_measurement_ret) {
         goto CLEANUP;
     }
     bpf_probe_read_kernel(&data.value, (__u32)data.size, value_ptr);
+   char hex_str[128] = {}; 
+    int pos = 0;
+    for (int i = 0; i < data.size && pos < sizeof(hex_str)-3; i++) {
+        unsigned char byte = data.value[i];
+        hex_str[pos++] = "0123456789abcdef"[byte >> 4];
+        hex_str[pos++] = "0123456789abcdef"[byte & 0x0F];
+    }
+    hex_str[pos] = '\0';
+    bpf_printk("IMA (%d): %s\n", data.size, hex_str);
+
 
     bpf_map_update_elem(&ima_data_map, &id, &data, BPF_ANY);
 
@@ -890,6 +991,16 @@ int trace_exit_close(struct trace_event_raw_sys_exit *ctx)
     __builtin_memcpy(&e->close.ima_hash, ima_data, sizeof(e->close.ima_hash));
 
     bpf_map_delete_elem(&ima_data_map, &pid_tgid);
+
+    struct ima_data *evm_data;
+    if (!(evm_data = bpf_map_lookup_elem(&evm_data_map, &pid_tgid))) {
+        bpf_printk("close without saved evm data");
+        goto END;
+    }
+
+    __builtin_memcpy(&e->close.evm_hash, evm_data, sizeof(e->close.evm_hash));
+
+    bpf_map_delete_elem(&evm_data_map, &pid_tgid);
 END:
     bpf_ringbuf_submit(e, 0);
     return 0;
