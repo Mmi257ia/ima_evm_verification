@@ -6,7 +6,7 @@ from model.machine import Machine
 from anis.model.lazy import assert_is_not_none
 from anis.stages.mediator import ModelTraceConsumer
 from mediator.builder import EventsBuilder
-from mediator.state import Inode, MediatorState, ProcFD
+from mediator.state import Inode, MediatorState, ProcFD, FileHash
 
 
 # here we recieve syscalls from monitor
@@ -36,6 +36,7 @@ class TraceTranslator:
         self._model_trace.create_user(uid, [primary_gid] + supplementary_gids)
 
 
+    # TODO pass concrete hashes?
     def add_init_folder(self, *, path: str,
                         dev: int, ino: int, uid: int, gid: int, perms: int):
 
@@ -43,8 +44,8 @@ class TraceTranslator:
         self.mediator_state.do_mkdir(path, folder, uid, gid, perms)
         parent = self.mediator_state.get_ino(dirname(path))
         self._model_trace.mkdir(path, 0o777, parent, folder, 0, 0o777, 0, bytes(), bytes(), 0, skip_coverage=True)
-        self._model_trace.chown(path, uid, gid, 0, 0, parent, folder, 0o777, 0, bytes(), 0, skip_coverage=True)
-        self._model_trace.chmod(path, perms, parent, folder, perms, 0, bytes(), 0, skip_coverage=True)
+        self._model_trace.chown(path, uid, gid, 0, 0, parent, folder, 0o777, 0, '1'.encode(), 0, skip_coverage=True)
+        self._model_trace.chmod(path, perms, parent, folder, perms, 0, '1'.encode(), 0, skip_coverage=True)
 
 
     def set_xattrs_init_file(self, *, path: str, xattrs: dict[str, str]):
@@ -55,7 +56,8 @@ class TraceTranslator:
             value_b = bytes.fromhex(value)
             self._model_trace.setxattr(path, name, value_b, len(value_b), 0, parent, folder, 0, 0, skip_coverage=True)
 
-
+    
+    # TODO pass concrete hashes?
     def add_init_file_or_link(self, *, path: str,
                       dev: int, ino: int, uid: int, gid: int, perms: int):
 

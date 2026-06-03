@@ -39,6 +39,8 @@ class Snapshot:
     files: dict[str, StatLine] = field(default_factory=dict[str, StatLine])
     files_xattrs: list[Xattrs] = field(default_factory=list[Xattrs])
     acl: list[tuple[str, list[str]]] = field(default_factory=list[tuple[str, list[str]]])
+    # TODO add hashes here for init files and dirs from monitor???
+    hashes: dict[str, tuple[bytes, bytes]] = ...
 
 
 class SnapshotBuilder:
