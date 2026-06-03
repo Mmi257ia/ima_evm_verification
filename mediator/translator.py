@@ -6,7 +6,7 @@ from model.machine import Machine
 from anis.model.lazy import assert_is_not_none
 from anis.stages.mediator import ModelTraceConsumer
 from mediator.builder import EventsBuilder
-from mediator.state import Inode, MediatorState, ProcFD, FileHash
+from mediator.state import Inode, MediatorState, ProcFD, FileHash, ImaEvmMode
 
 
 # here we recieve syscalls from monitor
@@ -136,6 +136,12 @@ class TraceTranslator:
                                           |(S_IWGRP if 'w' in macl[3] else 0)
                                           |(S_IXGRP if 'x' in macl[3] else 0)))
         self._model_trace.set_acl(userACL, groupACL, groupObjACL, maskACL, dacPermissions)
+
+    def set_init_ima_mode(self, *, ima_mode: str):
+        self._model_trace.switch_ima_mode(ImaEvmMode[ima_mode])
+    
+    def set_init_evm_mode(self, *, evm_mode: str):
+        self._model_trace.switch_evm_mode(ImaEvmMode[evm_mode])        # TODO not safe
 
     def login(self, *, uid: int, gid: int, pid: int, exeFile: str, umask: int):
         exeFile_ino = self.mediator_state.get_ino(exeFile)

@@ -456,6 +456,10 @@ class LinuxTestSpecImpl(LinuxTestSpec):
 
         tt.set_init_acl(data=snapshot.acl)
 
+        # TODO it is hardcoded
+        tt.set_init_ima_mode(ima_mode='ENFORCE')
+        tt.set_init_evm_mode(evm_mode='ENFORCE')
+
         check_axioms(self._machine)
 
 

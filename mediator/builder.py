@@ -29,10 +29,12 @@ from model.events.set_acl import set_acl
 from model.events.setxattr import setxattr
 from model.events.symlink import symlink
 from model.events.unlink import unlink
+from model.events.switch_ima_mode import switch_ima_mode
+from model.events.switch_evm_mode import switch_evm_mode
 from anis.stages.mediator import ModelTraceConsumer
 from model.machine import Machine
-from mediator.enums import FileFlags, Modes, XattrFlags
-from mediator.state import Inode, ProcFD
+from mediator.enums import FileFlags, Modes, XattrFlags, IntegrityModes
+from mediator.state import Inode, ProcFD, ImaEvmMode
 
 from anis.model.expressions import carrier_set_item
 
@@ -74,6 +76,7 @@ class EventsBuilder:
         self._Modes = Modes(m)
         self._FileFlags = FileFlags(m)
         self._XattrFlags = XattrFlags(m)
+        self._IntegrityModes = IntegrityModes(m)
     
     def translate_group(self, gid: int):
         return self._data_translator.model_groups[gid]
@@ -491,5 +494,17 @@ class EventsBuilder:
                 _groupObjACL = self.translate_groupObjACL(groupObjACL),
                 _maskACL = self.translate_maskACL(maskACL),
                 _dacPermissions = self.translate_dacPermissions(dacPermissions),
+                expected=True,
+                skip_coverage=True,)       
+
+    def switch_ima_mode(self, mode: ImaEvmMode):
+        self._model_trace.add(switch_ima_mode,
+                _mode=self._IntegrityModes[mode],
+                expected=True,
+                skip_coverage=True,)
+
+    def switch_evm_mode(self, mode: ImaEvmMode):
+        self._model_trace.add(switch_evm_mode,
+                _mode=self._IntegrityModes[mode],
                 expected=True,
                 skip_coverage=True,)

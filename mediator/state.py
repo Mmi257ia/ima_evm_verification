@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from os.path import isabs, join
 from typing import Literal, NamedTuple
+from enum import Enum
 
 class Inode(NamedTuple):
     dev: int
@@ -21,6 +22,11 @@ class FileStat:
     st_mode: int
     st_nlink: int
     kind: Literal["file", "folder"]
+
+class ImaEvmMode(Enum):
+    OFF = 'off'
+    FIX = 'fix'
+    ENFORCE = 'enforce'
 
 class MediatorState:
     
