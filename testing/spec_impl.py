@@ -166,6 +166,7 @@ class LinuxTestSpecImpl(LinuxTestSpec):
                             '--rm',
                             f'--name={container_name}',
                             '--cap-add=CAP_BPF', '--cap-add=CAP_SYS_ADMIN',
+                            '--cap-add=CAP_LINUX_IMMUTABLE',
                             '-v', '/sys/fs/bpf:/sys/fs/bpf:rw',
                             '-v', '/sys/kernel:/sys/kernel:ro'] +
                             (['-v', f'{ima_evm_host_dir}:/{ima_evm_dir}:rw']
@@ -308,6 +309,7 @@ class LinuxTestSpecImpl(LinuxTestSpec):
                         '-i',
                         f'--name={container_name}',
                         '--cap-add=CAP_BPF', '--cap-add=CAP_SYS_ADMIN',
+                        '--cap-add=CAP_LINUX_IMMUTABLE',
                         '-v', f'{base_path}:/progs:ro',
                         '-v', '/sys/fs/bpf:/sys/fs/bpf:rw',
                         '-v', '/sys/kernel:/sys/kernel:ro',
@@ -342,6 +344,7 @@ class LinuxTestSpecImpl(LinuxTestSpec):
                     '-i',
                     f'--name={container_name}',
                     '--cap-add=CAP_BPF', '--cap-add=CAP_SYS_ADMIN',
+                    '--cap-add=CAP_LINUX_IMMUTABLE',
                     '-v', f'{base_path}:/progs:ro',
                     '-v', '/sys/fs/bpf:/sys/fs/bpf:rw',
                     '-v', '/sys/kernel:/sys/kernel:ro',
