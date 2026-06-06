@@ -50,7 +50,7 @@ class TraceTranslator:
         chmod_meta = chown_meta if (perm_bits == 0o777) else (b'\x01' if chown_meta == bytes() else bytes())
         self._model_trace.chmod(path, perms, parent, folder, perms, 0, chmod_meta, 0, skip_coverage=True)
 
-        self.mediator_state.do_set_integrity_hashes(folder, FileHash(content_hash=bytes(), meta_hash=bytes()))  
+        self.mediator_state.do_set_integrity_hashes(folder, FileHash())
         # TODO new meta hash is not saved as evm hash after chmod so using one after `close`
 
 
@@ -78,7 +78,7 @@ class TraceTranslator:
             self.mediator_state.do_link(oldpath, path)
             self._model_trace.link(oldpath, path, oldParent, file, parent, 0, 0, skip_coverage=True)
         else:
-            self.mediator_state.do_creat(path, file, uid, gid, perms)
+            self.mediator_state.do_creat(path, file, uid, gid, perms, FileHash())
             self._model_trace.creat(path, 0o777, parent, file, 0, 0o777, 0, bytes(), bytes(), 3, skip_coverage=True)
             self._model_trace.close(3, [ProcFD(0, 3)], 0, bytes(), bytes(), bytes(), bytes(), 0, skip_coverage=True)
             # Guard для chown: (FileUser=owner ∧ FileGroup=group) ⇔ MetaHash=metaHash
@@ -180,7 +180,7 @@ class TraceTranslator:
             gid = assert_is_not_none(gid)
             perms = assert_is_not_none(perms)
             if not self.mediator_state.do_exists(abspath):
-                self.mediator_state.do_creat(abspath, file, uid, gid, perms)
+                self.mediator_state.do_creat(abspath, file, uid, gid, perms, FileHash())    # TODO what to pass into open
             self.mediator_state.do_open(ProcFD(pid, retval), file)
 
     def creat(self, pathname: str, mode: int, pid: int,
@@ -203,7 +203,7 @@ class TraceTranslator:
             gid = assert_is_not_none(gid)
             perms = assert_is_not_none(perms)
             if not self.mediator_state.do_exists(abspath):
-                self.mediator_state.do_creat(abspath, file, uid, gid, perms)
+                self.mediator_state.do_creat(abspath, file, uid, gid, perms, FileHash())    # TODO same
             self.mediator_state.do_open(ProcFD(pid, retval), file)
 
     def openat(self, dfd: int, pathname: str, flags: int, mode: int, pid: int,
@@ -237,7 +237,7 @@ class TraceTranslator:
             gid = assert_is_not_none(gid)
             perms = assert_is_not_none(perms)
             if not self.mediator_state.do_exists(abspath):
-                self.mediator_state.do_creat(abspath, file, uid, gid, perms)
+                self.mediator_state.do_creat(abspath, file, uid, gid, perms, FileHash())    # TODO same
             self.mediator_state.do_open(ProcFD(pid, retval), file)
 
     def mkdir(self, pathname: str, mode: int, pid: int,
@@ -259,7 +259,7 @@ class TraceTranslator:
             uid = assert_is_not_none(uid)
             gid = assert_is_not_none(gid)
             perms = assert_is_not_none(perms)
-            self.mediator_state.do_mkdir(abspath, folder, uid, gid, perms)
+            self.mediator_state.do_mkdir(abspath, folder, uid, gid, perms, FileHash())  # TODO placeholders for dirs?
 
     def chmod(self, pathname: str, mode: int, pid: int,
               perms: Optional[int], metaHash: bytes, retval: int):
@@ -268,24 +268,32 @@ class TraceTranslator:
         abspath = self.mediator_state.normalize(pathname, pid)
         parent = self.mediator_state.get_ino(dirname(abspath))
         file = self.mediator_state.get_ino(abspath)
+
+        # get cached hashes if parameters are not passed
+        metaHash = metaHash or self.mediator_state.get_real_hashes(file).meta_hash
+
         self._model_trace.chmod(pathname, mode, parent, file, perms, pid, metaHash, retval)
 
         # update mediator state
         if retval >= 0:
             perms = assert_is_not_none(perms)
-            self.mediator_state.do_chmod(file, perms)
+            self.mediator_state.do_chmod(file, perms, metaHash)
 
     def fchmod(self, fd: int, mode: int, pid: int,
                perms: Optional[int], metaHash: bytes, retval: int):
+        
+        file = self.mediator_state.get_ino_of_fd(ProcFD(pid, fd))
+
+        # get cached hashes if parameters are not passed
+        metaHash = metaHash or self.mediator_state.get_real_hashes(file).meta_hash
 
         # append model trace
         self._model_trace.fchmod(fd, mode, perms, pid, metaHash, retval)
 
         # update mediator state
         if retval >= 0:
-            file = self.mediator_state.get_ino_of_fd(ProcFD(pid, fd))
             perms = assert_is_not_none(perms)
-            self.mediator_state.do_chmod(file, perms)
+            self.mediator_state.do_chmod(file, perms, metaHash)
 
     def chown(self, pathname: str, owner: int, group: int, pid: int,
               perms: Optional[int], metaHash: bytes, retval: int):
@@ -296,28 +304,37 @@ class TraceTranslator:
         file = self.mediator_state.get_ino(abspath)
         pre_uid = self.mediator_state.do_stat(file).st_uid
         pre_gid = self.mediator_state.do_stat(file).st_gid
+        
+        # get cached hashes if parameters are not passed
+        metaHash = metaHash or self.mediator_state.get_real_hashes(file).meta_hash
+        
         self._model_trace.chown(pathname, owner, group, pre_uid, pre_gid, parent, file, perms, pid, metaHash, retval)
 
         # update mediator state
         if retval >= 0:
             perms = assert_is_not_none(perms)
-            self.mediator_state.do_chown(file, owner, group)
-            self.mediator_state.do_chmod(file, perms)
+            self.mediator_state.do_chown(file, owner, group, metaHash)
+            self.mediator_state.do_chmod(file, perms, metaHash)
 
     def fchown(self, fd: int, owner: int, group: int, pid: int,
                perms: Optional[int], metaHash: bytes, retval: int):
+    
 
         # append model trace
         file = self.mediator_state.get_ino_of_fd(ProcFD(pid, fd))
         pre_uid = self.mediator_state.do_stat(file).st_uid
         pre_gid = self.mediator_state.do_stat(file).st_gid
+
+        # get cached hashes if parameters are not passed
+        metaHash = metaHash or self.mediator_state.get_real_hashes(file).meta_hash
+        
         self._model_trace.fchown(fd, owner, group, pre_uid, pre_gid, perms, pid, metaHash, retval)
 
         # update mediator state
         if retval >= 0:
             perms = assert_is_not_none(perms)
-            self.mediator_state.do_chown(file, owner, group)
-            self.mediator_state.do_chmod(file, perms)
+            self.mediator_state.do_chown(file, owner, group, metaHash)
+            self.mediator_state.do_chmod(file, perms, metaHash)
 
     def chdir(self, dir: str, pid: int, retval: int):
         
@@ -379,6 +396,8 @@ class TraceTranslator:
 
     def symlink(self, target: str, linkpath: str, pid: int,
                 dev: Optional[int], ino: Optional[int], contentHash: bytes, metaHash: bytes, retval: int):
+        
+        # TODO optional hashes
 
         # append model trace
         abstarget = self.mediator_state.normalize(target, pid)
@@ -408,25 +427,29 @@ class TraceTranslator:
 
     def close(self, fd: int, pid: int, contentHash: bytes, metaHash: bytes, retval: int):
         # contentHash / metaHash — текущие хеши файла от монитора (ima_collect_measurement / evm)
-
+        
         proc_fd = ProcFD(pid, fd)
+        ino = self.mediator_state.get_ino_of_fd(proc_fd)
+
+        # get cached hashes if parameters are not passed
+        contentHash = contentHash or self.mediator_state.get_real_hashes(ino).content_hash
+        metaHash = metaHash or self.mediator_state.get_real_hashes(ino).meta_hash
 
         # append model trace
         fds = [proc_fd] if all(p == pid for (p, pfd) in self.mediator_state.fd2ino if pfd == fd) else []
 
         # get ima/evm strings
         if proc_fd in self.mediator_state.fd2ino:
-            ino = self.mediator_state.get_ino_of_fd(proc_fd)
-            stored = self.mediator_state.get_ima_evm_hash(ino)
+            stored = self.mediator_state.get_integrity_hashes(ino)
         else:
-            stored = FileHash(bytes(), bytes())
+            stored = FileHash()
         # stored.content_hash = imaHash (старый хеш из IMAHash до этого вызова)
         # stored.meta_hash    = evmHash (старый хеш из EVMHash до этого вызова)
         self._model_trace.close(fd, fds, pid, stored.content_hash, stored.meta_hash, contentHash, metaHash, retval)
 
         # update mediator state
         if retval >= 0:
-            self.mediator_state.do_close(ProcFD(pid, fd), FileHash(content_hash=contentHash, meta_hash=metaHash))
+            self.mediator_state.do_close(ProcFD(pid, fd), FileHash(contentHash, metaHash))
         
     def exit(self, pid: int, retval: int):
 
