@@ -1,0 +1,11 @@
+--- a/anis/stages/assertions.py	2026-06-07 13:05:59.026587488 +0300
++++ b/anis/stages/assertions.py	2026-06-07 13:06:15.602871698 +0300
+@@ -8,7 +8,7 @@
+         assertTrue(event)
+ 
+ def assertTrue(event: Event):
+-    assert ~event.value, event.label
++    assert ~event.value, f"{event.label}: failed guards {[guard.label for guard in event.guards if guard.value.isFalse()]}"
+     # exec actions (this is "parallel assignment" because all right sides of assignments are already evaluated in action.value)
+     for action in event.actions:
+         setattr(action.machine, action.variable, ~action.value)
