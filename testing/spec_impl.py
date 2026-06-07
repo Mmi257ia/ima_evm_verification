@@ -150,6 +150,8 @@ class LinuxTestSpecImpl(LinuxTestSpec):
             mount_ima_dir = ima_evm_dir is not None
             if mount_ima_dir:
                 ima_evm_host_dir = TemporaryDirectorySudoCleanup()
+                subprocess.run(['sudo', 'chown', 'root', ima_evm_host_dir])
+                subprocess.run(['sudo', 'chmod', '777', ima_evm_host_dir])
 
             if before_run:
                 subprocess.run(['sudo', '/bin/bash'], input=before_run, encoding='utf-8', check=True)
