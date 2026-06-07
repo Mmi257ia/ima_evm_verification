@@ -29,10 +29,12 @@ from model.events.set_acl import set_acl
 from model.events.setxattr import setxattr
 from model.events.symlink import symlink
 from model.events.unlink import unlink
+from model.events.switch_ima_mode import switch_ima_mode
+from model.events.switch_evm_mode import switch_evm_mode
 from anis.stages.mediator import ModelTraceConsumer
 from model.machine import Machine
-from mediator.enums import FileFlags, Modes, XattrFlags
-from mediator.state import Inode, ProcFD
+from mediator.enums import FileFlags, Modes, XattrFlags, IntegrityModes
+from mediator.state import Inode, ProcFD, ImaEvmMode
 
 from anis.model.expressions import carrier_set_item
 
@@ -46,6 +48,7 @@ class DataTranslator:
         self.model_groups = defaultdict[int, m.GroupsItem](lambda: carrier_set_item(m, m.GroupsItem)) # implementation to model
         self.model_procs = defaultdict[int, m.ProcsItem](lambda: carrier_set_item(m, m.ProcsItem)) # implementation to model
         self.model_fds = defaultdict[tuple[int, int], m.FileDescriptorsExtendedItem](lambda: carrier_set_item(m, m.FileDescriptorsExtendedItem)) # implementation (pid, fd) to model
+        self.model_hashes = defaultdict[bytes, m.HashesItem](lambda: carrier_set_item(m, m.HashesItem)) # implementation to model
 
         # it comes from INITIALISATION event...
         self.model_users[root_uid] = m.ROOT_USER
@@ -55,6 +58,12 @@ class DataTranslator:
 
         self.rootInode = Inode(root_dev, root_ino)
         self.model_files[self.rootInode] = m.ROOT
+
+        # TODO get root and exe hashes here??
+        self.model_hashes[...] = m.ROOT_CONTENT_HASH
+        self.model_hashes[...] = m.ROOT_META_HASH
+        self.model_hashes[...] = m.INIT_EXE_CONTENT_HASH
+        self.model_hashes[...] = m.INIT_EXE_META_HASH
 
 
 class EventsBuilder:
@@ -67,6 +76,7 @@ class EventsBuilder:
         self._Modes = Modes(m)
         self._FileFlags = FileFlags(m)
         self._XattrFlags = XattrFlags(m)
+        self._IntegrityModes = IntegrityModes(m)
     
     def translate_group(self, gid: int):
         return self._data_translator.model_groups[gid]
@@ -131,6 +141,9 @@ class EventsBuilder:
     def translate_capability(self, capability: str) -> Machine.CapabilitiesItem:
         raise NotImplementedError()
 
+    def translate_hash(self, hash: bytes):
+        return self._data_translator.model_hashes[hash]
+
     def translate_inodes(self, files: Sequence[Inode]):
         return frozenset((self.translate_inode(file) for file in files))
 
@@ -146,7 +159,7 @@ class EventsBuilder:
     def open_create(self, path: str, flags: int, mode: int,
                               parent: Inode,
                               file: Optional[Inode], gid: Optional[int], perms: Optional[int],
-                              proc: int, retval: int, skip_coverage: bool = False):
+                              proc: int, content_hash: bytes, meta_hash: bytes, retval: int, skip_coverage: bool = False):
         self._model_trace.add(open_create,
                 _proc = self.translate_proc(proc),
                 _parent = self.translate_inode(parent),
@@ -158,6 +171,8 @@ class EventsBuilder:
                 _fdNumber = retval if retval >= 0 else None,
                 _group = self.translate_group(gid) if gid is not None else None,
                 _perms = self.translate_mode(perms) if perms is not None else None,
+                _contentHash = self.translate_hash(content_hash),
+                _metaHash = self.translate_hash(meta_hash),
                 expected= retval >= 0,
                 skip_coverage=skip_coverage,)
 
@@ -180,7 +195,7 @@ class EventsBuilder:
                     path: str, mode: int,
                     parent: Inode,
                     file: Optional[Inode], gid: Optional[int], perms: Optional[int],
-                    proc: int, retval: int, skip_coverage: bool = False):
+                    proc: int, content_hash: bytes, meta_hash: bytes, retval: int, skip_coverage: bool = False):
         self._model_trace.add(creat,
                 _proc = self.translate_proc(proc),
                 _parent = self.translate_inode(parent),
@@ -192,13 +207,15 @@ class EventsBuilder:
                 _fdNumber = retval if retval >= 0 else None,
                 _group = self.translate_group(gid) if gid is not None else None,
                 _perms = self.translate_mode(perms) if perms is not None else None,
+                _contentHash = self.translate_hash(content_hash),
+                _metaHash = self.translate_hash(meta_hash),
                 expected= retval >= 0,
                 skip_coverage= skip_coverage,)
 
     def openat_create(self, dirfd: int, path: str, flags: int, mode: int,
                                       parent: Inode,
                                       file: Optional[Inode], gid: Optional[int], perms: Optional[int],
-                                      cwd: Inode, proc: int, retval: int, skip_coverage: bool = False):
+                                      cwd: Inode, proc: int, content_hash: bytes, meta_hash: bytes, retval: int, skip_coverage: bool = False):
         self._model_trace.add(openat_create,
                 _proc = self.translate_proc(proc),
                 _dirfd = self.translate_fd((proc, dirfd)),
@@ -212,6 +229,8 @@ class EventsBuilder:
                 _cwd = self.translate_inode(cwd),
                 _group = self.translate_group(gid) if gid is not None else None,
                 _perms = self.translate_mode(perms) if perms is not None else None,
+                _contentHash = self.translate_hash(content_hash),
+                _metaHash = self.translate_hash(meta_hash),
                 expected= retval >= 0,
                 skip_coverage= skip_coverage,)
 
@@ -235,7 +254,7 @@ class EventsBuilder:
     def mkdir(self, path: str, mode: int,
                               parent: Inode,
                               folder: Optional[Inode], gid: Optional[int], perms: Optional[int],
-                              proc: int, retval: int, skip_coverage: bool = False):
+                              proc: int, content_hash: bytes, meta_hash: bytes, retval: int, skip_coverage: bool = False):
         self._model_trace.add(mkdir,
                 _proc = self.translate_proc(proc),
                 _parent = self.translate_inode(parent),
@@ -244,10 +263,12 @@ class EventsBuilder:
                 _mode = self.translate_mode(mode),
                 _group = self.translate_group(gid) if gid is not None else None,
                 _perms = self.translate_mode(perms) if perms is not None else None,
+                _contentHash = self.translate_hash(content_hash),
+                _metaHash = self.translate_hash(meta_hash),
                 expected= retval >= 0,
                 skip_coverage=skip_coverage,)
     
-    def chmod(self, path: str, mode: int, parent: Inode, file: Inode, perms: Optional[int], proc: int, retval: int, skip_coverage: bool = False):
+    def chmod(self, path: str, mode: int, parent: Inode, file: Inode, perms: Optional[int], proc: int, meta_hash: bytes, retval: int, skip_coverage: bool = False):
         self._model_trace.add(chmod,
                 _proc = self.translate_proc(proc),
                 _parent = self.translate_inode(parent),
@@ -255,19 +276,21 @@ class EventsBuilder:
                 _name = self.translate_string(basename(path)),
                 _mode = self.translate_mode(mode),
                 _perms = self.translate_mode(perms) if perms is not None else None,
+                _metaHash = self.translate_hash(meta_hash),
                 expected= retval >= 0,
                 skip_coverage=skip_coverage,)
 
-    def fchmod(self, fd: int, mode: int, perms: Optional[int], proc: int, retval: int, skip_coverage: bool = False):
+    def fchmod(self, fd: int, mode: int, perms: Optional[int], proc: int, meta_hash: bytes, retval: int, skip_coverage: bool = False):
         self._model_trace.add(fchmod,
                 _proc = self.translate_proc(proc),
                 _fd = self.translate_fd((proc, fd)),
                 _mode = self.translate_mode(mode),
                 _perms = self.translate_mode(perms) if perms is not None else None,
+                _metaHash = self.translate_hash(meta_hash),
                 expected= retval >= 0,
                 skip_coverage=skip_coverage,)
 
-    def chown(self, path: str, uid: int, gid: int, pre_uid: int, pre_gid: int, parent: Inode, file: Inode, perms: Optional[int], proc: int, retval: int, skip_coverage: bool = False):
+    def chown(self, path: str, uid: int, gid: int, pre_uid: int, pre_gid: int, parent: Inode, file: Inode, perms: Optional[int], proc: int, meta_hash: bytes, retval: int, skip_coverage: bool = False):
         self._model_trace.add(chown,
                 _proc = self.translate_proc(proc),
                 _parent = self.translate_inode(parent),
@@ -276,16 +299,18 @@ class EventsBuilder:
                 _owner = self.translate_user(uid if uid != -1 else pre_uid),
                 _group = self.translate_group(gid if gid != -1 else pre_gid),
                 _perms = self.translate_mode(perms) if perms is not None else None,
+                _metaHash = self.translate_hash(meta_hash),
                 expected= retval >= 0,
                 skip_coverage=skip_coverage,)
 
-    def fchown(self, fd: int, uid: int, gid: int, pre_uid: int, pre_gid: int, perms: Optional[int], proc: int, retval: int, skip_coverage: bool = False):
+    def fchown(self, fd: int, uid: int, gid: int, pre_uid: int, pre_gid: int, perms: Optional[int], proc: int, meta_hash: bytes, retval: int, skip_coverage: bool = False):
         self._model_trace.add(fchown,
                 _proc = self.translate_proc(proc),
                 _fd = self.translate_fd((proc, fd)),
                 _owner = self.translate_user(uid if uid != -1 else pre_uid),
                 _group = self.translate_group(gid if gid != -1 else pre_gid),
                 _perms = self.translate_mode(perms) if perms is not None else None,
+                _metaHash = self.translate_hash(meta_hash),
                 expected= retval >= 0,
                 skip_coverage=skip_coverage,)
 
@@ -341,7 +366,7 @@ class EventsBuilder:
 
     def symlink(self, target: str, linkpath: str, target_parent: Inode, parent: Inode,
                                 file: Optional[Inode],
-                                proc: int, retval: int, skip_coverage: bool = False):
+                                proc: int, content_hash: bytes, meta_hash: bytes, retval: int, skip_coverage: bool = False):
         self._model_trace.add(symlink,
                 _proc = self.translate_proc(proc),
                 _target_parent = self.translate_inode(target_parent),
@@ -349,6 +374,8 @@ class EventsBuilder:
                 _parent = self.translate_inode(parent),
                 _file = self.translate_inode(file) if file is not None else None,
                 _name = self.translate_string(basename(linkpath)),
+                _contentHash = self.translate_hash(content_hash),
+                _metaHash = self.translate_hash(meta_hash),
                 expected= retval >= 0,
                 skip_coverage=skip_coverage,)
 
@@ -383,11 +410,15 @@ class EventsBuilder:
                 expected= retval >= 0,
                 skip_coverage= skip_coverage,)
 
-    def close(self, fd: int, fds: Sequence[ProcFD], proc: int, retval: int, skip_coverage: bool = False):
+    def close(self, fd: int, fds: Sequence[ProcFD], proc: int, ima_hash: bytes, evm_hash: bytes, content_hash: bytes, meta_hash: bytes, retval: int, skip_coverage: bool = False):
         self._model_trace.add(close,
                 _proc = self.translate_proc(proc),
                 _fd = self.translate_fd((proc, fd,)),
                 _fds = self.translate_fds(fds),
+                _imaHash = self.translate_hash(ima_hash),
+                _evmHash = self.translate_hash(evm_hash),
+                _contentHash = self.translate_hash(content_hash),
+                _metaHash = self.translate_hash(meta_hash),
                 expected= retval >= 0,
                 skip_coverage= skip_coverage,)
     
@@ -463,5 +494,29 @@ class EventsBuilder:
                 _groupObjACL = self.translate_groupObjACL(groupObjACL),
                 _maskACL = self.translate_maskACL(maskACL),
                 _dacPermissions = self.translate_dacPermissions(dacPermissions),
+                expected=True,
+                skip_coverage=True,)       
+
+    def switch_ima_mode(self, mode: ImaEvmMode):
+        self._model_trace.add(switch_ima_mode,
+                _mode=self._IntegrityModes[mode],
+                expected=True,
+                skip_coverage=True,)
+
+    def switch_evm_mode(self, mode: ImaEvmMode):
+        self._model_trace.add(switch_evm_mode,
+                _mode=self._IntegrityModes[mode],
+                expected=True,
+                skip_coverage=True,)
+
+    def mark_immutable(self, file: Inode):
+        self._model_trace.add(switch_evm_mode,
+                _file=self.translate_inode(file),
+                expected=True,
+                skip_coverage=True,)
+
+    def unmark_immutable(self, file: Inode):
+        self._model_trace.add(switch_evm_mode,
+                _file=self.translate_inode(file),
                 expected=True,
                 skip_coverage=True,)

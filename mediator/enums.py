@@ -2,6 +2,7 @@ import os
 import stat
 
 from model.machine import Machine
+from .state import ImaEvmMode
 
 
 def Modes(m: Machine):
@@ -53,3 +54,9 @@ def XattrFlags(m: Machine):
         os.XATTR_REPLACE: m.XATTR_REPLACE,
     }
 
+def IntegrityModes(m: Machine):
+    return {
+        ImaEvmMode.OFF: m.OFF,
+        ImaEvmMode.FIX: m.FIX,
+        ImaEvmMode.ENFORCE: m.ENFORCE
+    }

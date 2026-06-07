@@ -325,10 +325,12 @@ class LinuxTestSpecImpl(LinuxTestSpec):
                     yield io.StringIO(proc.stdout)
                     # yield self._PrependedStream(info, proc.stdout)
 
-                except:
+                except Exception as e:
                     # subprocess.run(['sudo', 'podman', 'stop', container_name])
+                    if isinstance(e, subprocess.CalledProcessError):
+                        print(f"Program returned code {e.returncode}:\n{e.stderr.strip()}")
                     subprocess.run(['sudo', 'podman', 'rm', '-f', container_name])
-                    raise
+                    raise e
 
             else:
 
@@ -448,6 +450,9 @@ class LinuxTestSpecImpl(LinuxTestSpec):
 
 
     def _replay_setup(self, snapshot: Snapshot, tt: TraceTranslator):
+        
+        tt.set_init_ima_mode(ima_mode='FIX')
+        tt.set_init_evm_mode(evm_mode='FIX')
 
         for group in snapshot.groups:
             tt.add_init_group(gid=group.gid)
@@ -463,18 +468,26 @@ class LinuxTestSpecImpl(LinuxTestSpec):
             tt.set_xattrs_init_file(path=attrs.path, xattrs = attrs.xattrs)
 
         for path, s in snapshot.files.items():
+            h = snapshot.hashes.get(path, (bytes(), bytes()))
             tt.add_init_file_or_link(path=path, dev=s.dev, ino=s.ino,
-                                     uid=s.uid, gid=s.gid, perms=s.perms)
+                                     uid=s.uid, gid=s.gid, perms=s.perms,
+                                     content_hash=h[0], meta_hash=h[1])
 
         for attrs in snapshot.files_xattrs:
             tt.set_xattrs_init_file(path=attrs.path, xattrs = attrs.xattrs)
 
         tt.set_init_acl(data=snapshot.acl)
 
+        for path in snapshot.immutable:
+            tt.set_init_immutable(path=path)
+
         check_axioms(self._machine)
 
 
     def _replay_login(self, trace: LineStream, tt: TraceTranslator):
+
+        tt.set_init_ima_mode(ima_mode='ENFORCE')
+        tt.set_init_evm_mode(evm_mode='ENFORCE')
 
         line = trace.readline()
         if not line:
@@ -490,9 +503,40 @@ class LinuxTestSpecImpl(LinuxTestSpec):
 
     def _replay_trace(self, trace: LineStream, tt: TraceTranslator):
 
-        for line in trace:
-            event = json.loads(line)
-            t_operation = TraceOperation(name=event['syscall'], ret=event['ret'], args=event)
-            operation = make_call(t_operation)
-            getattr(tt, operation.name)(**operation.args)
-            check_axioms(self._machine)
+        events_queue = []       # holds events that has been read but not processed
+
+        trace_iter = trace.__iter__()
+        while True:
+            try:
+                event = events_queue.pop(0) if events_queue else json.loads(next(trace_iter))
+                event_name = event.get('syscall')
+                if not event_name:  # skip all except syscalls
+                    continue
+
+                if event_name == 'close':   # find __fput and fill in hashes
+                    fput_event = self.__seek_matching_fput(event, events_queue, trace_iter)
+                    event['contentHash'] = fput_event['contentHash']
+                    event['metaHash'] = fput_event['metaHash']
+
+                self._handle_syscall(event, event_name, tt)
+            except StopIteration:
+                break
+
+    def _handle_syscall(self, event: dict, event_name: str, tt: TraceTranslator):
+        t_operation = TraceOperation(name=event_name, ret=event.get('ret', 0), args=event)
+        operation = make_call(t_operation)
+        getattr(tt, operation.name)(**operation.args)
+        check_axioms(self._machine)
+    
+    def __seek_matching_fput(self, close_event: dict, queue: list, iter: Iterator[str]) -> dict:
+        for e in queue:
+            if e.get('call') == '__fput' and e.get('dev') == close_event['dev'] and e.get('ino') == close_event['ino']:
+                return e
+        try:
+            while True:
+                e = json.loads(next(iter))
+                queue.append(e)
+                if e.get('call') == '__fput' and e.get('dev') == close_event['dev'] and e.get('ino') == close_event['ino']:
+                    return e
+        except StopIteration:
+            raise ValueError(f'Failed to find a matching `__fput` call for `close` before trace end')

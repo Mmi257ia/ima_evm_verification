@@ -132,6 +132,14 @@ static inline bool is_string(const uint8_t *buf, size_t len)
 #define field_size(type, member) sizeof(((type *)0)->member)
 
 char base64_xattr[(field_size(struct getxattr, value) + 2) / 3 * 4 + 1];
+char hex_xattr[field_size(struct getxattr, value) * 2 + 1];
+
+static void hex_encode(const uint8_t *src, size_t len, char *dst)
+{
+    for (size_t i = 0; i < len; i++)
+        sprintf(dst + i*2, "%02x", src[i]);
+    dst[len*2] = '\0';
+}
 
 #define sys_entry(e) [SYS_##e] = #e
 static const char *syscall_names[500] = {
@@ -149,6 +157,10 @@ static const char *syscall_names[500] = {
 static int handle_event(void *ctx, void *data, size_t len)
 {
     struct syscall_event *e = data;
+    char ima_hash_hex[129];
+    ima_hash_hex[0] = '\0';
+    char evm_hash_hex[129];
+    evm_hash_hex[0] = '\0';
 
     printf("{ \"syscall\": \"%s\", \"proc\": \"%s\", \"pid\": %d, \"euid\": %d, \"egid\": %d, ",
         syscall_names[e->syscall_nr], e->comm,
@@ -205,31 +217,40 @@ static int handle_event(void *ctx, void *data, size_t len)
             "\"fd\": %d, ",
             e->fchdir.fd);
         break;
-    case SYS_chmod: printf(
-            "\"pathname\": \"%s\", \"mode\": %d, \"perms\": %u,",
+    case SYS_chmod: 
+        hex_encode(e->chmod.evm_hash.value, e->chmod.evm_hash.size, evm_hash_hex);
+        printf(
+            "\"pathname\": \"%s\", \"mode\": %d, \"perms\": %u, \"metaHash\": \"%s\", \"metaHashLen\": \"%llu\",",
             e->chmod.pathname, e->chmod.mode,
-            e->chmod.perms);
+            e->chmod.perms, evm_hash_hex, e->chmod.evm_hash.size);
         break;
-    case SYS_fchmod: printf(
-            "\"fd\": %d, \"mode\": %d, \"perms\": %u, ",
+    case SYS_fchmod: 
+        hex_encode(e->fchmod.evm_hash.value, e->fchmod.evm_hash.size, evm_hash_hex);
+        printf(
+            "\"fd\": %d, \"mode\": %d, \"perms\": %u, \"metaHash\": \"%s\", \"metaHashLen\": \"%llu\", ",
             e->fchmod.fd, e->fchmod.mode,
-            e->fchmod.perms);
+            e->fchmod.perms, evm_hash_hex, e->fchmod.evm_hash.size);
         break;
-    case SYS_chown: printf(
-            "\"pathname\": \"%s\", \"owner\": %d, \"group\": %d, "
-            "\"perms\": %u,",
+    case SYS_chown: 
+        hex_encode(e->chown.evm_hash.value, e->chown.evm_hash.size, evm_hash_hex);
+        printf(
+            "\"pathname\": \"%s\", \"owner\": %d, \"group\": %d, \"perms\": %u, \"metaHash\": \"%s\", \"metaHashLen\": \"%llu\",",
             e->chown.pathname, e->chown.owner,
-            e->chown.group, e->chown.perms);
+            e->chown.group, e->chown.perms, evm_hash_hex, e->chown.evm_hash.size);
         break;
-    case SYS_fchown: printf(
-            "\"fd\": \"%d\", \"owner\": %d, \"group\": %d, "
-            "\"perms\": %u, ",
+    case SYS_fchown: 
+        hex_encode(e->fchown.evm_hash.value, e->fchown.evm_hash.size, evm_hash_hex);
+        printf(
+            "\"fd\": \"%d\", \"owner\": %d, \"group\": %d, \"perms\": %u, \"metaHash\": \"%s\", \"metaHashLen\": \"%llu\",",
             e->fchown.fd, e->fchown.owner,
-            e->fchown.group, e->fchown.perms);
+            e->fchown.group, e->fchown.perms, evm_hash_hex, e->fchown.evm_hash.size);
         break;
-    case SYS_close: printf(
-            "\"fd\": %u,",
-            e->close.fd);
+    case SYS_close: 
+        hex_encode(e->close.ima_hash.value, e->close.ima_hash.size, ima_hash_hex);
+        hex_encode(e->close.evm_hash.value, e->close.evm_hash.size, evm_hash_hex);
+        printf(
+            "\"fd\": %u, \"contentHash\": \"%s\", \"contentHashLen\": \"%llu\", \"metaHash\": \"%s\", \"metaHashLen\": \"%llu\", ",
+            e->close.fd, ima_hash_hex, e->close.ima_hash.size, evm_hash_hex, e->close.evm_hash.size);
         break;
     case SYS_umask: printf(
             "\"mask\": %d,",
@@ -247,13 +268,16 @@ static int handle_event(void *ctx, void *data, size_t len)
             "\"fd\": %u,",
             e->getdents.fd);
         break;
+    case SYS_symlink: 
+        hex_encode(e->symlink.ima_hash.value, e->symlink.ima_hash.size, ima_hash_hex);
+        hex_encode(e->symlink.evm_hash.value, e->symlink.evm_hash.size, evm_hash_hex);
+        printf(
+            "\"oldname\": \"%s\", \"newname\": \"%s\", \"contentHash\": \"%s\", \"contentHashLen\": \"%llu\", \"metaHash\": \"%s\", \"metaHashLen\": \"%llu\",",
+            e->symlink.oldname, e->symlink.newname, ima_hash_hex, e->symlink.ima_hash.size, evm_hash_hex, e->symlink.evm_hash.size);
+        break;
     case SYS_link: printf(
             "\"oldname\": \"%s\", \"newname\": \"%s\",",
             e->link.oldname, e->link.newname);
-        break;
-    case SYS_symlink: printf(
-            "\"oldname\": \"%s\", \"newname\": \"%s\",",
-            e->symlink.oldname, e->symlink.newname);
         break;
     case SYS_getxattr: {
         char *decoded_value;
@@ -275,8 +299,8 @@ static int handle_event(void *ctx, void *data, size_t len)
                 decoded_value = raw;
             }
         } else {
-            fprintf(stderr, "Unknown value format in getxattr\n");
-            abort();
+            hex_encode(raw_value, size, hex_xattr);
+            decoded_value = hex_xattr;
         }
 
         printf(
