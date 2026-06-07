@@ -381,17 +381,16 @@ int BPF_KRETPROBE(handle___fput_ret) {
     e->fput.evm_hash.size = 0;
     e->fput.evm_hash.value[0] = 0;
 
-    struct ima_data *ima_data;
+    struct ima_data *ima_data, *evm_data;
     if (!(ima_data = bpf_map_lookup_elem(&ima_data_map, &pid_tgid))) {
         bpf_printk("fput without saved ima data");
-        goto END;
+        goto END_IMA;
     }
 
     __builtin_memcpy(&e->fput.ima_hash, ima_data, sizeof(e->fput.ima_hash));
 
     bpf_map_delete_elem(&ima_data_map, &pid_tgid);
-
-    struct ima_data *evm_data;
+END_IMA:
     if (!(evm_data = bpf_map_lookup_elem(&evm_data_map, &pid_tgid))) {
         bpf_printk("fput without saved evm data");
         goto END;
@@ -960,7 +959,19 @@ int trace_exit_chmod(struct trace_event_raw_sys_exit *ctx)
     }
 
     u64 pid_tgid = bpf_get_current_pid_tgid();
+
+    struct ima_data *evm_data;
     struct chmod_data *data;
+    if (!(evm_data = bpf_map_lookup_elem(&evm_data_map, &pid_tgid))) {
+        bpf_printk("chmod without saved evm data");
+        goto END_IMA;
+    }
+
+    __builtin_memcpy(&e->syscall.chmod.evm_hash, evm_data, sizeof(e->syscall.chmod.evm_hash));
+
+    bpf_map_delete_elem(&evm_data_map, &pid_tgid);
+
+END_IMA:
     if (!(data = bpf_map_lookup_elem(&chmod_data_map, &pid_tgid))) {
         bpf_printk("chmod without saved data");
         goto END;
@@ -969,19 +980,6 @@ int trace_exit_chmod(struct trace_event_raw_sys_exit *ctx)
     e->syscall.chmod.perms = data->i_mode;
 
     bpf_map_delete_elem(&chmod_data_map, &pid_tgid);
-
-    struct ima_data *evm_data;
-    if (!(evm_data = bpf_map_lookup_elem(&evm_data_map, &pid_tgid))) {
-        bpf_printk("chmod without saved evm data");
-        goto END;
-    }
-
-    __builtin_memcpy(&e->syscall.chmod.evm_hash, evm_data, sizeof(e->syscall.chmod.evm_hash));
-
-    bpf_map_delete_elem(&evm_data_map, &pid_tgid);
-
-    bpf_printk("chmod close");
-
 END:
     bpf_ringbuf_submit(e, 0);
     return 0;
@@ -1009,7 +1007,18 @@ int trace_exit_fchmod(struct trace_event_raw_sys_exit *ctx)
     }
 
     u64 pid_tgid = bpf_get_current_pid_tgid();
+
+    struct ima_data *evm_data;
     struct chmod_data *data;
+    if (!(evm_data = bpf_map_lookup_elem(&evm_data_map, &pid_tgid))) {
+        bpf_printk("chmod without saved evm data");
+        goto END_IMA;
+    }
+
+    __builtin_memcpy(&e->syscall.fchmod.evm_hash, evm_data, sizeof(e->syscall.fchmod.evm_hash));
+
+    bpf_map_delete_elem(&evm_data_map, &pid_tgid);
+END_IMA:
     if (!(data = bpf_map_lookup_elem(&chmod_data_map, &pid_tgid))) {
         bpf_printk("chmod without saved data");
         goto END;
@@ -1017,17 +1026,6 @@ int trace_exit_fchmod(struct trace_event_raw_sys_exit *ctx)
 
     e->syscall.fchmod.perms = data->i_mode;
     bpf_map_delete_elem(&chmod_data_map, &pid_tgid);
-
-        struct ima_data *evm_data;
-    if (!(evm_data = bpf_map_lookup_elem(&evm_data_map, &pid_tgid))) {
-        bpf_printk("chmod without saved evm data");
-        goto END;
-    }
-
-    __builtin_memcpy(&e->syscall.fchmod.evm_hash, evm_data, sizeof(e->syscall.fchmod.evm_hash));
-
-    bpf_map_delete_elem(&evm_data_map, &pid_tgid);
-
 END:
     bpf_ringbuf_submit(e, 0);
     return 0;
@@ -1055,8 +1053,19 @@ int trace_exit_chown(struct trace_event_raw_sys_exit *ctx)
         goto END;
     }
 
-    u64 pid_tgid = bpf_get_current_pid_tgid();
+    struct ima_data *evm_data;
     struct chown_data *data;
+    u64 pid_tgid = bpf_get_current_pid_tgid();
+
+    if (!(evm_data = bpf_map_lookup_elem(&evm_data_map, &pid_tgid))) {
+        bpf_printk("chown without saved evm data");
+        goto END_IMA;
+    }
+
+    __builtin_memcpy(&e->syscall.chown.evm_hash, evm_data, sizeof(e->syscall.chown.evm_hash));
+
+    bpf_map_delete_elem(&evm_data_map, &pid_tgid);
+END_IMA:
     if (!(data = bpf_map_lookup_elem(&chown_data_map, &pid_tgid))) {
         bpf_printk("chown without saved data");
         goto END;
@@ -1065,17 +1074,6 @@ int trace_exit_chown(struct trace_event_raw_sys_exit *ctx)
     e->syscall.chown.perms = data->i_mode;
 
     bpf_map_delete_elem(&chown_data_map, &pid_tgid);
-
-    struct ima_data *evm_data;
-    if (!(evm_data = bpf_map_lookup_elem(&evm_data_map, &pid_tgid))) {
-        bpf_printk("chown without saved evm data");
-        goto END;
-    }
-
-    __builtin_memcpy(&e->syscall.chown.evm_hash, evm_data, sizeof(e->syscall.chown.evm_hash));
-
-    bpf_map_delete_elem(&evm_data_map, &pid_tgid);
-
 END:
     bpf_ringbuf_submit(e, 0);
     return 0;
@@ -1104,7 +1102,18 @@ int trace_exit_fchown(struct trace_event_raw_sys_exit *ctx)
     }
 
     u64 pid_tgid = bpf_get_current_pid_tgid();
+
+    struct ima_data *evm_data;
     struct chown_data *data;
+    if (!(evm_data = bpf_map_lookup_elem(&evm_data_map, &pid_tgid))) {
+        bpf_printk("chown without saved evm data");
+        goto END_IMA;
+    }
+
+    __builtin_memcpy(&e->syscall.fchown.evm_hash, evm_data, sizeof(e->syscall.fchown.evm_hash));
+
+    bpf_map_delete_elem(&evm_data_map, &pid_tgid);
+END_IMA:
     if (!(data = bpf_map_lookup_elem(&chown_data_map, &pid_tgid))) {
         bpf_printk("chown without saved data");
         goto END;
@@ -1112,17 +1121,6 @@ int trace_exit_fchown(struct trace_event_raw_sys_exit *ctx)
 
     e->syscall.fchown.perms = data->i_mode;
     bpf_map_delete_elem(&chown_data_map, &pid_tgid);
-
-    struct ima_data *evm_data;
-    if (!(evm_data = bpf_map_lookup_elem(&evm_data_map, &pid_tgid))) {
-        bpf_printk("chown without saved evm data");
-        goto END;
-    }
-
-    __builtin_memcpy(&e->syscall.fchown.evm_hash, evm_data, sizeof(e->syscall.fchown.evm_hash));
-
-    bpf_map_delete_elem(&evm_data_map, &pid_tgid);
-
 END:
     bpf_ringbuf_submit(e, 0);
     return 0;
