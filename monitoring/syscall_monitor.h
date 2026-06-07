@@ -31,6 +31,7 @@ enum events_type {
 
 struct syscall_event {
     __u64 ts;
+    __u64 event_start_time;
 
     __u32 type;
     char comm[TASK_COMM_LEN];

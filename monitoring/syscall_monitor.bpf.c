@@ -28,6 +28,7 @@ struct {
 } args_map SEC(".maps");
 
 struct syscall_args {
+    __u64 time;
     __u64 args[6];
 };
 
@@ -82,6 +83,7 @@ struct {
 struct fput_data {
     unsigned ino;
     unsigned dev;
+    __u64 time;
 };
 
 struct {
@@ -342,6 +344,7 @@ int BPF_KPROBE(handle___fput)
     data.ino = BPF_CORE_READ(i, i_ino);
     struct super_block *sb = BPF_CORE_READ(i, i_sb);
     data.dev = BPF_CORE_READ(sb, s_dev);
+    data.time = bpf_ktime_get_ns();
     bpf_map_update_elem(&fput_data_map, &id, &data, BPF_ANY);
 
     return 0;
@@ -595,6 +598,7 @@ save_syscall_args(struct trace_event_raw_sys_enter *ctx)
 
     struct syscall_args args = {};
     BPF_CORE_READ_INTO(&args.args, ctx, args);
+    args.time = bpf_ktime_get_ns();
 
     long ret;
     if ((ret = bpf_map_update_elem(&args_map, &key, &args, BPF_ANY)) < 0) {
@@ -632,6 +636,7 @@ read_syscall_args(struct trace_event_raw_sys_exit *ctx)
     __builtin_memcpy(e->syscall.args, args->args, sizeof e->syscall.args);
 
     e->syscall.ret = ctx->ret;
+    e->event_start_time = args->time;
 
     return e;
 }
@@ -1393,6 +1398,8 @@ int trace_enter_exit(struct trace_event_raw_sys_enter *ctx)
         return 0;
     }
 
+    e->event_start_time = e->ts;
+
     e->syscall.syscall_nr = ctx->id;
     struct syscall_args args = {};
     BPF_CORE_READ_INTO(&args.args, ctx, args);
@@ -1414,6 +1421,7 @@ int trace_enter_exit_group(struct trace_event_raw_sys_enter *ctx)
     }
 
     e->syscall.syscall_nr = ctx->id;
+    e->event_start_time = e->ts;
     struct syscall_args args = {};
     BPF_CORE_READ_INTO(&args.args, ctx, args);
     __builtin_memcpy(e->syscall.args, &args.args, sizeof e->syscall.args);

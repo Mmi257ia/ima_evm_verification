@@ -173,8 +173,8 @@ static int handle_event(void *ctx, void *data, size_t len)
     evm_hash_hex[0] = '\0';
 
     if (e->type == FPUT_EVENT) {
-        printf("{ \"call\": \"__fput\", \"proc\": \"%s\", \"pid\": %d, \"euid\": %d, \"egid\": %d, ",
-        e->comm, e->pid, e->euid, e->egid);
+        printf("{ \"call\": \"__fput\", \"proc\": \"%s\", \"pid\": %d, \"euid\": %d, \"egid\": %d, \"time\": %llu ,",
+        e->comm, e->pid, e->euid, e->egid, e->event_start_time);
         hex_encode(e->fput.ima_hash.value, e->fput.ima_hash.size, ima_hash_hex);
         hex_encode(e->fput.evm_hash.value, e->fput.evm_hash.size, evm_hash_hex);
         printf(
@@ -183,9 +183,9 @@ static int handle_event(void *ctx, void *data, size_t len)
         return 0;
     }
     
-    printf("{ \"syscall\": \"%s\", \"proc\": \"%s\", \"pid\": %d, \"euid\": %d, \"egid\": %d, ",
+    printf("{ \"syscall\": \"%s\", \"proc\": \"%s\", \"pid\": %d, \"euid\": %d, \"egid\": %d, \"time\": %llu ,",
         syscall_names[e->syscall.syscall_nr], e->comm,
-        e->pid, e->euid, e->egid);
+        e->pid, e->euid, e->egid, e->event_start_time);
 
     switch (e->syscall.syscall_nr) {
     case SYS_open: printf(
