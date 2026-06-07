@@ -45,11 +45,11 @@ class TraceTranslator:
         folder = Inode(dev, ino,)
         self.mediator_state.do_mkdir(path, folder, uid, gid, perms)
         parent = self.mediator_state.get_ino(dirname(path))
-        self._model_trace.mkdir(path, 0o777, parent, folder, 0, 0o777, 0, bytes(), bytes(), 0, skip_coverage=True)
-        chown_meta = bytes() if (uid == 0 and gid == 0) else calc_fake_meta_hash(uid, gid, 0o777)
+        mkdir_meta = calc_fake_meta_hash(0, 0, 0o777)
+        self._model_trace.mkdir(path, 0o777, parent, folder, 0, 0o777, 0, bytes(), mkdir_meta, 0, skip_coverage=True)
+        chown_meta = calc_fake_meta_hash(uid, gid, 0o777)
         self._model_trace.chown(path, uid, gid, 0, 0, parent, folder, 0o777, 0, chown_meta, 0, skip_coverage=True)
-        perm_bits = S_IMODE(perms)
-        chmod_meta = chown_meta if (perm_bits == 0o777) else calc_fake_meta_hash(uid, gid, perms)
+        chmod_meta = calc_fake_meta_hash(uid, gid, perms)
         self._model_trace.chmod(path, perms, parent, folder, perms, 0, chmod_meta, 0, skip_coverage=True)
 
         self.mediator_state.do_set_integrity_hashes(folder, FileHash(bytes(), chmod_meta))
@@ -79,15 +79,15 @@ class TraceTranslator:
             self.mediator_state.do_link(oldpath, path)
             self._model_trace.link(oldpath, path, oldParent, file, parent, 0, 0, skip_coverage=True)
         else:
-            meta_hash = meta_hash or calc_fake_meta_hash(uid, gid, perms)
-            chown_meta = bytes() if (uid == 0 and gid == 0) else calc_fake_meta_hash(uid, gid, 0o777)
-            perm_bits = S_IMODE(perms)
-            chmod_meta = chown_meta if (perm_bits == 0o777) else calc_fake_meta_hash(uid, gid, perms)
+
+            create_meta =  calc_fake_meta_hash(0, 0, 0o777)
+            chown_meta =  calc_fake_meta_hash(uid, gid, 0o777)
+            chmod_meta = calc_fake_meta_hash(uid, gid, perms)
             close_meta = meta_hash if content_hash else chmod_meta
 
             self.mediator_state.do_creat(path, file, uid, gid, perms, FileHash())
             self.mediator_state.do_open(ProcFD(0, 3), file)
-            self._model_trace.creat(path, 0o777, parent, file, 0, 0o777, 0, bytes(), bytes(), 3, skip_coverage=True)
+            self._model_trace.creat(path, 0o777, parent, file, 0, 0o777, 0, bytes(), create_meta, 3, skip_coverage=True)
             self._model_trace.fchown(3, uid, gid, 0, 0, 0o777, 0, chown_meta, 0, skip_coverage=True)
             self._model_trace.fchmod(3, perms, perms, 0, chmod_meta, 0, skip_coverage=True)
             self._model_trace.close(3, [ProcFD(0, 3)], 0, content_hash, close_meta, content_hash, close_meta, 0, skip_coverage=True)

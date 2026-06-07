@@ -40,6 +40,7 @@ class Snapshot:
     files_xattrs: list[Xattrs] = field(default_factory=list[Xattrs])
     acl: list[tuple[str, list[str]]] = field(default_factory=list[tuple[str, list[str]]])
     hashes: dict[str, tuple[bytes, bytes]] = field(default_factory=dict[str, tuple[bytes, bytes]])
+    immutable: list[str] = field(default_factory=list[str])
 
 
 class SnapshotBuilder:
@@ -156,6 +157,11 @@ class SnapshotBuilder:
 
         for path in self._init_dirs + self._init_files:
             snapshot.acl.append(self._parse_getfacl_output(trace))
+        for path in self._init_dirs + self._init_files:
+            line = self._xreadline(trace)
+            flags, lpath = line.split(' ', 1)
+            if flags[4] == 'i':
+                snapshot.immutable.append(lpath)
 
         for xattrs in snapshot.folders_xattrs + snapshot.files_xattrs:
             snapshot.hashes[xattrs.path] = self._extract_hashes(xattrs)
