@@ -5,6 +5,15 @@
 #include "vmlinux.h"
 #include <bpf/bpf_helpers.h>
 
+
+#ifndef S_IFMT
+#define S_IFMT  00170000
+#endif
+#ifndef S_IFREG
+#define S_IFREG 0100000
+#endif
+#define S_ISREG(m) (((m) & S_IFMT) == S_IFREG)
+
 #define ERANGE 34
 
 static __always_inline

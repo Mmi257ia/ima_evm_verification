@@ -341,6 +341,13 @@ int BPF_KPROBE(handle___fput)
     }
     struct fput_data data = {};
     const struct inode *i = bpf_file_inode(f);
+    if (i == NULL) {
+        return 0;
+    }
+    umode_t mode = BPF_CORE_READ(i, i_mode);
+    if (!S_ISREG(mode)) {
+        return 0;
+    }
     data.ino = BPF_CORE_READ(i, i_ino);
     struct super_block *sb = BPF_CORE_READ(i, i_sb);
     data.dev = BPF_CORE_READ(sb, s_dev);
@@ -352,24 +359,23 @@ int BPF_KPROBE(handle___fput)
 
 SEC("kretprobe/__fput")
 int BPF_KRETPROBE(handle___fput_ret) {
+
+    u64 pid_tgid = bpf_get_current_pid_tgid();
+    struct fput_data *data;
+    if (!(data = bpf_map_lookup_elem(&fput_data_map, &pid_tgid))) {
+        bpf_printk("__fput without saved data");
+        return 0;
+    }
     struct syscall_event *e;
     if (!(e = read_main_args())) {
         return 0;
     }
     bpf_printk("__fput_ret!");
     e->type = FPUT_EVENT;
-
-    u64 pid_tgid = bpf_get_current_pid_tgid();
-    struct fput_data *data;
-    if (!(data = bpf_map_lookup_elem(&fput_data_map, &pid_tgid))) {
-        bpf_printk("execve without saved data");
-        goto END;
-    } else {
-        e->fput.ino = data->ino;
-        e->fput.dev = data->dev;
-        bpf_map_delete_elem(&fput_data_map, &pid_tgid);
-    }
-    
+    e->fput.ino = data->ino;
+    e->fput.dev = data->dev;
+    bpf_map_delete_elem(&fput_data_map, &pid_tgid);
+    e->event_start_time = data->time;
     e->fput.ima_hash.size = 0;
     e->fput.ima_hash.value[0] = 0;
     e->fput.evm_hash.size = 0;
