@@ -43,9 +43,9 @@ class TraceTranslator:
                         dev: int, ino: int, uid: int, gid: int, perms: int):
 
         folder = Inode(dev, ino,)
-        self.mediator_state.do_mkdir(path, folder, uid, gid, perms)
-        parent = self.mediator_state.get_ino(dirname(path))
         mkdir_meta = calc_fake_meta_hash(0, 0, 0o777)
+        self.mediator_state.do_mkdir(path, folder, uid, gid, perms, FileHash(meta_hash=mkdir_meta))
+        parent = self.mediator_state.get_ino(dirname(path))
         self._model_trace.mkdir(path, 0o777, parent, folder, 0, 0o777, 0, bytes(), mkdir_meta, 0, skip_coverage=True)
         chown_meta = calc_fake_meta_hash(uid, gid, 0o777)
         self._model_trace.chown(path, uid, gid, 0, 0, parent, folder, 0o777, 0, chown_meta, 0, skip_coverage=True)

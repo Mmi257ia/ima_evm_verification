@@ -80,12 +80,12 @@ class MediatorState:
         self.stats[file] = FileStat(st_uid=uid, st_gid=gid, st_mode=perms, st_nlink=1, kind="file")
         self.do_set_real_hashes(file, hashes)
 
-    def do_mkdir(self, path: str, folder: Inode, uid: int, gid: int, perms: int):
+    def do_mkdir(self, path: str, folder: Inode, uid: int, gid: int, perms: int, hashes: FileHash):
         if not isabs(path):
             raise ValueError('Relative path')
         self.path2ino[path] = folder
         self.stats[folder] = FileStat(st_uid=uid, st_gid=gid, st_mode=perms, st_nlink=1, kind="folder")
-        self.do_set_real_hashes(folder, FileHash())
+        self.do_set_real_hashes(folder, hashes)
 
     def do_chown(self, file: Inode, uid: int, gid: int, meta_hash: bytes):
         self.stats[file].st_uid = uid
