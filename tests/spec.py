@@ -128,9 +128,9 @@ class LinuxTestSpec(Protocol):
     def compile(self, program_maker: TextProducer, path: str, make_file: bool=True) -> Any:
         ...
 
-    def run(self, exeFile: Any, user: str, group: str, umask: int, runner: str, before_run: str|None, after_run: str|None) -> None:
+    def run(self, exeFile: Any, user: str, group: str, umask: int, runner: str, ima_evm_dir: str|None, before_run: str|None, after_run: str|None) -> None:
         ...
 
     @contextmanager
-    def make_program_and_run(self, user: str, group: str, umask: int, runner: str = '<>', make_file: bool=True, before_run: str|None=None, after_run: str|None=None) -> Iterator[ProgramMaker]:
+    def make_program_and_run(self, user: str, group: str, umask: int, runner: str = '<>', ima_evm_dir: str|None=None, make_file: bool=True, before_run: str|None=None, after_run: str|None=None) -> Iterator[ProgramMaker]:
         ...
