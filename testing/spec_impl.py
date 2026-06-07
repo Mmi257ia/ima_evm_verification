@@ -25,6 +25,20 @@ from testing.initialiser import Snapshot, SnapshotBuilder
 from anis.stages.invariants import check_axioms
 
 
+class TemporaryDirectorySudoCleanup(tempfile.TemporaryDirectory):
+    """
+    If a directory for IMA/EVM was mounted, we need to explicitly clear all its contents
+    on behalf of root user because they may belong to users in container and the host user
+    cannot delete them without root rights. This wrapper does it on cleanup via sudo.
+    """
+    def cleanup(self):
+        path = Path(self.name)
+        if self._finalizer.detach() or path.exists():
+            for f in path.rglob('*'):
+                subprocess.run(['sudo', 'rm', '-rf', f])
+            path.rmdir()
+
+
 class LinuxTestSpecImpl(LinuxTestSpec):
 
     def __init__(self, nodeid: str, m: Any, testpath: Path):
@@ -36,28 +50,10 @@ class LinuxTestSpecImpl(LinuxTestSpec):
         self._additional_files = dict[str, str]()
         self._machine = m
         self._label = sha256(nodeid.encode()).hexdigest()[:10]
-
-
-    def setup_ima_policy(self,
-                         fowner_uid: str) -> None:
-        """
-        IMA policy is a kernel property, and the kernel is being shared among
-        the host system and all the containers. Also, IMA policy can be changed
-        just once per kernel launch. To change it, reboot is required.
-        Thus, this function checks if the policy was set before. If it was,
-        it does nothing. Else, it sets the required policy from the host system.
-        Currently, policies are just "appraise files owned by the user with uid".
-        """
-        securityfs_path = Path('/sys/kernel/security')
-        ima_path = securityfs_path / 'ima'
-        if not ima_path.exists():
-            raise RuntimeError(f"Can't find IMA files ({ima_path})."
-                               f'Perhaps IMA is not supported or securityfs is not mounted on {securityfs_path}?')
-        ima_policy_path = ima_path / 'policy'
-        is_policy_set = not ima_policy_path.exists()
-        if not is_policy_set:
-            subprocess.run(['sudo', 'sh', '-c',
-                            f"echo 'appraise fowner={fowner_uid}' > {ima_policy_path}"])
+        # Workaround to allow creation of files/dirs in root
+        # by all users which is needed for IMA/EVM to appraise
+        # new files created by users affected by its policy
+        self._setup_commands.append('chmod a+w /')
 
     def make_user(self,
                   user: str,
@@ -80,8 +76,7 @@ class LinuxTestSpecImpl(LinuxTestSpec):
         if not isabs(path):
             raise ValueError('Relative paths are not supported')
         self._initialiser.add_file(path)
-        self.add_setup(f'touch {path}')
-        self.add_setup(f'chown {owner}:{group} {path}')
+        self.add_setup(f'sudo -u {owner} -g {group} touch {path}')
         self.add_setup(f'chmod {mode:0o} {path}')
         
 
@@ -93,8 +88,7 @@ class LinuxTestSpecImpl(LinuxTestSpec):
         if not isabs(path):
             raise ValueError('Relative paths are not supported')
         self._initialiser.add_dir(path)
-        self.add_setup(f'mkdir {path}')
-        self.add_setup(f'chown {owner}:{group} {path}')
+        self.add_setup(f'sudo -u {owner} -g {group} mkdir {path}')
         self.add_setup(f'chmod {mode:0o} {path}')
     
     def add_setup(self, setup_cmd: str) -> Any:
@@ -119,32 +113,31 @@ class LinuxTestSpecImpl(LinuxTestSpec):
 
     @contextmanager
     def make_program_and_run(self, user: str, group: str, umask: int, runner: str = '<>', make_file: bool = True,
-                             before_run: str|None=None, after_run: str|None=None):
+                             ima_evm_dir: str|None=None, before_run: str|None=None, after_run: str|None=None):
         with self.make_program() as prog:
             yield prog
         exeFile = self.compile(prog, '/tst_prog', make_file)
-        self.run(exeFile, user, group, umask, runner, before_run, after_run)
+        self.run(exeFile, user, group, umask, runner, ima_evm_dir, before_run, after_run)
 
 
     def run(self, exeFile: MonitoredExeFile,
             user: str, group: str, umask: int, runner: str,
-            before_run: str|None, after_run: str|None):
+            ima_evm_dir: str|None, before_run: str|None, after_run: str|None):
 
         # with self._run_with_preparing_image(exeFile=exeFile,
         #         user=user, group=group, umask=umask, runner=runner,
-        #         before_run=before_run, after_run=after_run) as trace:
+        #         ima_evm_dir=ima_evm_dir, before_run=before_run, after_run=after_run) as trace:
 
         with self._run_without_preparing_image(exeFile=exeFile,
                 user=user, group=group, umask=umask, runner=runner,
-                before_run=before_run, after_run=after_run) as trace:
+                ima_evm_dir=ima_evm_dir, before_run=before_run, after_run=after_run) as trace:
 
             self._check(trace)
-
 
     @contextmanager
     def _run_with_preparing_image(self, exeFile: MonitoredExeFile,
             user: str, group: str, umask: int, runner: str,
-            before_run: str|None, after_run: str|None):
+            ima_evm_dir: str|None, before_run: str|None, after_run: str|None):
 
         setup_cmd = ' && '.join(self._setup_commands)
         runner_cmd = runner.replace('<>', f'(chfn --other="umask={umask:0o}" {user}; /monitoring/monitor run sudo -HE -u {user} -g {group} {exeFile.path})')
@@ -153,6 +146,12 @@ class LinuxTestSpecImpl(LinuxTestSpec):
         def main():
 
             build_image()
+
+            mount_ima_dir = ima_evm_dir is not None
+            if mount_ima_dir:
+                ima_evm_host_dir = TemporaryDirectorySudoCleanup()
+                subprocess.run(['sudo', 'chown', 'root:root', ima_evm_host_dir])
+                subprocess.run(['sudo', 'chmod', '777', ima_evm_host_dir])
 
             if before_run:
                 subprocess.run(['sudo', '/bin/bash'], input=before_run, encoding='utf-8', check=True)
@@ -165,7 +164,10 @@ class LinuxTestSpecImpl(LinuxTestSpec):
                             f'--name={container_name}',
                             '--cap-add=CAP_BPF', '--cap-add=CAP_SYS_ADMIN',
                             '-v', '/sys/fs/bpf:/sys/fs/bpf:rw',
-                            '-v', '/sys/kernel:/sys/kernel:ro',
+                            '-v', '/sys/kernel:/sys/kernel:ro'] +
+                            (['-v', f'{ima_evm_host_dir}:/{ima_evm_dir}:rw']
+                                if mount_ima_dir else [])
+                            + [
                             # '--pid=host',
                             # '--network=host',
                             # '--security-opt', 'label=disable',
@@ -268,15 +270,22 @@ class LinuxTestSpecImpl(LinuxTestSpec):
     @contextmanager
     def _run_without_preparing_image(self, exeFile: MonitoredExeFile,
             user: str, group: str, umask: int, runner: str,
-            before_run: str|None, after_run: str|None):
+            ima_evm_dir: str|None, before_run: str|None, after_run: str|None):
 
         container_name = f"anis_{self._label}"
 
-        with tempfile.TemporaryDirectory() as base:
+        with TemporaryDirectorySudoCleanup() as base:
 
             base_path = Path(base)
             for path, contents in self._additional_files.items():
                 (base_path / basename(path)).write_text(contents)
+
+            mount_ima_dir = ima_evm_dir is not None
+            if mount_ima_dir:
+                ima_evm_host_dir = base_path / 'ima_evm_dir'
+                ima_evm_host_dir.mkdir()
+                subprocess.run(['sudo', 'chown', 'root:root', ima_evm_host_dir])
+                subprocess.run(['sudo', 'chmod', '777', ima_evm_host_dir])
 
             gatherinfo_commands = self._initialiser.make_text_of_gatherinfo_file() # this make important
             runner_cmd = runner.replace('<>', f'(chfn --other="umask={umask:0o}" {user}; /monitoring/monitor run sudo -HE -u {user} -g {group} {exeFile.path})')
@@ -299,7 +308,10 @@ class LinuxTestSpecImpl(LinuxTestSpec):
                         '-v', f'{base_path}:/progs:ro',
                         '-v', '/sys/fs/bpf:/sys/fs/bpf:rw',
                         '-v', '/sys/kernel:/sys/kernel:ro',
-                        '-v', './monitoring:/monitoring:ro',
+                        '-v', './monitoring:/monitoring:ro'] +
+                        (['-v', f'{ima_evm_host_dir}:/{ima_evm_dir}:rw']
+                            if mount_ima_dir else [])
+                        + [
                         # '--pid=host',
                         # '--network=host',
                         # '--security-opt', 'label=disable',
@@ -328,7 +340,10 @@ class LinuxTestSpecImpl(LinuxTestSpec):
                     '-v', f'{base_path}:/progs:ro',
                     '-v', '/sys/fs/bpf:/sys/fs/bpf:rw',
                     '-v', '/sys/kernel:/sys/kernel:ro',
-                    '-v', './monitoring:/monitoring:ro',
+                    '-v', './monitoring:/monitoring:ro'] +
+                    (['-v', f'{ima_evm_host_dir}:/{ima_evm_dir}:rw']
+                        if mount_ima_dir else [])
+                    + [
                     # '--pid=host',
                     # '--network=host',
                     # '--security-opt', 'label=disable',
