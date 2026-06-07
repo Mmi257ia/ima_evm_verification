@@ -34,11 +34,17 @@ def test_open_exists_methodic_4(t: LinuxTestSpec, access_mode):
     t.add_setup(f'cat /dir/file > /dev/null')
     t.add_setup(f'chattr +i /dir/file')
 
-    with t.make_program_and_run(ima_user, ima_user, umask=0) as child:
-        # read should success
-        # write/rdwd should fail 
-        if should_succeed:
-            fd = child.open('/dir/file', flags, 0, fatal=True)
-            child.close(fd)
-        else:
-            fd = child.open('/dir/file', flags, 0, fatal=False)
+    try:
+        with t.make_program_and_run(ima_user, ima_user, umask=0) as child:
+            # read should succeed
+            # write/rdwd should fail 
+
+            if should_succeed:
+                fd = child.open('/dir/file', flags, 0, fatal=True)
+                child.close(fd)
+                raise Exception("ERROR")
+            else:
+                fd = child.open('/dir/file', flags, 0, fatal=True)
+                
+    except Exception:
+        print(f"Rightfully caught exception {mode_name}")

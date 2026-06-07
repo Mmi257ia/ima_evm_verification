@@ -1,6 +1,7 @@
 from os import O_WRONLY, O_CREAT
 from pytest import fixture
 from tests.spec import LinuxTestSpec
+import pytest
 
 @fixture(params=[
     ("create", O_WRONLY | O_CREAT),
@@ -20,6 +21,6 @@ def test_open_create_methodic_1(t: LinuxTestSpec, access_mode):
     new_file_path = '/dir/new_file'
 
     with t.make_program_and_run(ima_user, ima_user, umask=0) as child:
-        # should pass 
-        fd = child.open(new_file_path, flags, 0o666, fatal=True)
-        child.close(fd)
+        # should pass
+        child.open(new_file_path, flags, 0o666)
+

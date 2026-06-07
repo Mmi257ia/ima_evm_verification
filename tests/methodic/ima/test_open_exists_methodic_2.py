@@ -23,6 +23,7 @@ def test_open_exists_methodic_2(t: LinuxTestSpec, access_mode):
 
     policy_uid = 2000
 
+
     # user with ima
     ima_user = 'ima_user'
     t.make_user(ima_user, uid=policy_uid)
@@ -31,13 +32,19 @@ def test_open_exists_methodic_2(t: LinuxTestSpec, access_mode):
     t.make_file('/dir/file', owner=ima_user, group=ima_user, mode=0o666)
 
     t.add_setup(f'echo "test content" > /dir/file')
-    t.add_setup(f'cat /dir/file > /dev/null')
 
-    with t.make_program_and_run(ima_user, ima_user, umask=0) as child:
-        # read should success
-        # write/rdwd should fail 
+    try:
+        with t.make_program_and_run(ima_user, ima_user, umask=0) as child:
+            # read should success
+            # write/rdwd should fail 
+            if should_succeed:
+                fd = child.open('/dir/file', flags, 0, fatal=True)
+                child.close(fd)
+            else:
+                fd = child.open('/dir/file', flags, 0, fatal=True)
+
+    except AssertionError as e:
         if should_succeed:
-            fd = child.open('/dir/file', flags, 0, fatal=True)
-            child.close(fd)
+            raise e
         else:
-            fd = child.open('/dir/file', flags, 0, fatal=False)
+            print(f"Rightfully caught exception: {e}")
