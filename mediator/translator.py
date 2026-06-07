@@ -12,7 +12,7 @@ from mediator.state import Inode, MediatorState, ProcFD, FileHash, ImaEvmMode
 def calc_fake_meta_hash(uid: int | None, gid: int | None, perms: int | None) -> bytes:
     if any(p is None for p in (uid, gid, perms)):
         return bytes()
-    return f"{uid}_{gid}_{perms}".encode()
+    return f"{uid}_{gid}_{S_IMODE(perms)}".encode()
 
 
 class TraceTranslator:
@@ -49,7 +49,7 @@ class TraceTranslator:
         self._model_trace.mkdir(path, 0o777, parent, folder, 0, 0o777, 0, bytes(), mkdir_meta, 0, skip_coverage=True)
         chown_meta = calc_fake_meta_hash(uid, gid, 0o777)
         self._model_trace.chown(path, uid, gid, 0, 0, parent, folder, 0o777, 0, chown_meta, 0, skip_coverage=True)
-        chmod_meta = calc_fake_meta_hash(uid, gid, S_IMODE(perms))
+        chmod_meta = calc_fake_meta_hash(uid, gid, perms)
         self._model_trace.chmod(path, perms, parent, folder, perms, 0, chmod_meta, 0, skip_coverage=True)
 
         self.mediator_state.do_set_integrity_hashes(folder, FileHash(bytes(), chmod_meta))
@@ -82,7 +82,7 @@ class TraceTranslator:
 
             create_meta =  calc_fake_meta_hash(0, 0, 0o777)
             chown_meta =  calc_fake_meta_hash(uid, gid, 0o777)
-            chmod_meta = calc_fake_meta_hash(uid, gid, S_IMODE(perms))
+            chmod_meta = calc_fake_meta_hash(uid, gid, perms)
             close_meta = meta_hash if content_hash else chmod_meta
 
             self.mediator_state.do_creat(path, file, uid, gid, perms, FileHash(meta_hash=create_meta))
