@@ -282,7 +282,8 @@ class LinuxTestSpecImpl(LinuxTestSpec):
             if mount_ima_dir:
                 ima_evm_host_dir = base_path / 'ima_evm_dir'
                 ima_evm_host_dir.mkdir()
-                ima_evm_host_dir.chmod(0o777)
+                subprocess.run(['sudo', 'chown', 'root', ima_evm_host_dir])
+                subprocess.run(['sudo', 'chmod', '777', ima_evm_host_dir])
 
             gatherinfo_commands = self._initialiser.make_text_of_gatherinfo_file() # this make important
             runner_cmd = runner.replace('<>', f'(chfn --other="umask={umask:0o}" {user}; /monitoring/monitor run sudo -HE -u {user} -g {group} {exeFile.path})')
