@@ -9,6 +9,12 @@ from mediator.builder import EventsBuilder
 from mediator.state import Inode, MediatorState, ProcFD, FileHash, ImaEvmMode
 
 
+def calc_fake_meta_hash(uid: int | None, gid: int | None, perms: int | None) -> bytes:
+    if any(p is None for p in (uid, gid, perms)):
+        return bytes()
+    return f"{uid}_{gid}_{perms}".encode()
+
+
 # here we recieve syscalls from monitor
 # TODO update inits with real hashes
 
@@ -251,7 +257,9 @@ class TraceTranslator:
         if dev is None:
             dev = parent.dev
         folder = Inode(dev, ino) if ino is not None else None
-        self._model_trace.mkdir(pathname, mode, parent, folder, gid, perms, pid, bytes(), bytes(), retval)
+
+        fake_meta_hash = calc_fake_meta_hash(uid, gid, perms)
+        self._model_trace.mkdir(pathname, mode, parent, folder, gid, perms, pid, bytes(), fake_meta_hash, retval)
 
         # update mediator state
         if retval >= 0:
@@ -259,7 +267,7 @@ class TraceTranslator:
             uid = assert_is_not_none(uid)
             gid = assert_is_not_none(gid)
             perms = assert_is_not_none(perms)
-            self.mediator_state.do_mkdir(abspath, folder, uid, gid, perms, FileHash())  # TODO placeholders for dirs?
+            self.mediator_state.do_mkdir(abspath, folder, uid, gid, perms, FileHash(bytes(), fake_meta_hash))
 
     def chmod(self, pathname: str, mode: int, pid: int,
               perms: Optional[int], metaHash: bytes, retval: int):
@@ -268,9 +276,10 @@ class TraceTranslator:
         abspath = self.mediator_state.normalize(pathname, pid)
         parent = self.mediator_state.get_ino(dirname(abspath))
         file = self.mediator_state.get_ino(abspath)
+        filestat = self.mediator_state.do_stat(file)
 
         # get cached hashes if parameters are not passed
-        metaHash = metaHash or self.mediator_state.get_real_hashes(file).meta_hash
+        metaHash = metaHash or self.mediator_state.get_real_hashes(file).meta_hash or calc_fake_meta_hash(filestat.st_uid, filestat.st_gid, perms)
 
         self._model_trace.chmod(pathname, mode, parent, file, perms, pid, metaHash, retval)
 
@@ -283,9 +292,10 @@ class TraceTranslator:
                perms: Optional[int], metaHash: bytes, retval: int):
         
         file = self.mediator_state.get_ino_of_fd(ProcFD(pid, fd))
+        filestat = self.mediator_state.do_stat(file)
 
         # get cached hashes if parameters are not passed
-        metaHash = metaHash or self.mediator_state.get_real_hashes(file).meta_hash
+        metaHash = metaHash or self.mediator_state.get_real_hashes(file).meta_hash or calc_fake_meta_hash(filestat.st_uid, filestat.st_gid, perms)
 
         # append model trace
         self._model_trace.fchmod(fd, mode, perms, pid, metaHash, retval)
@@ -306,7 +316,7 @@ class TraceTranslator:
         pre_gid = self.mediator_state.do_stat(file).st_gid
         
         # get cached hashes if parameters are not passed
-        metaHash = metaHash or self.mediator_state.get_real_hashes(file).meta_hash
+        metaHash = metaHash or self.mediator_state.get_real_hashes(file).meta_hash or calc_fake_meta_hash(owner, group, perms)
         
         self._model_trace.chown(pathname, owner, group, pre_uid, pre_gid, parent, file, perms, pid, metaHash, retval)
 
@@ -326,7 +336,7 @@ class TraceTranslator:
         pre_gid = self.mediator_state.do_stat(file).st_gid
 
         # get cached hashes if parameters are not passed
-        metaHash = metaHash or self.mediator_state.get_real_hashes(file).meta_hash
+        metaHash = metaHash or self.mediator_state.get_real_hashes(file).meta_hash or calc_fake_meta_hash(owner, group, perms)
         
         self._model_trace.fchown(fd, owner, group, pre_uid, pre_gid, perms, pid, metaHash, retval)
 
