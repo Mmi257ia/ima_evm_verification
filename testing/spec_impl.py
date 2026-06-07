@@ -463,14 +463,16 @@ class LinuxTestSpecImpl(LinuxTestSpec):
 
         tt.set_init_acl(data=snapshot.acl)
 
-        # TODO it is hardcoded
-        tt.set_init_ima_mode(ima_mode='ENFORCE')
-        tt.set_init_evm_mode(evm_mode='ENFORCE')
+        for path in snapshot.immutable:
+            tt.set_init_immutable(path=path)
 
         check_axioms(self._machine)
 
 
     def _replay_login(self, trace: LineStream, tt: TraceTranslator):
+
+        tt.set_init_ima_mode(ima_mode='ENFORCE')
+        tt.set_init_evm_mode(evm_mode='ENFORCE')
 
         line = trace.readline()
         if not line:

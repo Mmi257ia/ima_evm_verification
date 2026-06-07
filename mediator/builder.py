@@ -508,3 +508,15 @@ class EventsBuilder:
                 _mode=self._IntegrityModes[mode],
                 expected=True,
                 skip_coverage=True,)
+
+    def mark_immutable(self, file: Inode):
+        self._model_trace.add(switch_evm_mode,
+                _file=self.translate_inode(file),
+                expected=True,
+                skip_coverage=True,)
+
+    def unmark_immutable(self, file: Inode):
+        self._model_trace.add(switch_evm_mode,
+                _file=self.translate_inode(file),
+                expected=True,
+                skip_coverage=True,)

@@ -148,8 +148,12 @@ class TraceTranslator:
     
     def set_init_evm_mode(self, *, evm_mode: str):
         mode = ImaEvmMode[evm_mode]
-        self._model_trace.switch_evm_mode(mode)        # TODO not safe
+        self._model_trace.switch_evm_mode(mode)
         self.mediator_state.do_switch_evm_mode(mode)
+
+    def set_init_immutable(self, *, path: str):
+        ino = self.mediator_state.get_ino(path)
+        self._model_trace.mark_immutable(ino)
 
     def login(self, *, uid: int, gid: int, pid: int, exeFile: str, umask: int):
         exeFile_ino = self.mediator_state.get_ino(exeFile)
