@@ -49,7 +49,7 @@ class TraceTranslator:
         self._model_trace.mkdir(path, 0o777, parent, folder, 0, 0o777, 0, bytes(), mkdir_meta, 0, skip_coverage=True)
         chown_meta = calc_fake_meta_hash(uid, gid, 0o777)
         self._model_trace.chown(path, uid, gid, 0, 0, parent, folder, 0o777, 0, chown_meta, 0, skip_coverage=True)
-        chmod_meta = calc_fake_meta_hash(uid, gid, perms)
+        chmod_meta = calc_fake_meta_hash(uid, gid, S_IMODE(perms))
         self._model_trace.chmod(path, perms, parent, folder, perms, 0, chmod_meta, 0, skip_coverage=True)
 
         self.mediator_state.do_set_integrity_hashes(folder, FileHash(bytes(), chmod_meta))
@@ -82,10 +82,10 @@ class TraceTranslator:
 
             create_meta =  calc_fake_meta_hash(0, 0, 0o777)
             chown_meta =  calc_fake_meta_hash(uid, gid, 0o777)
-            chmod_meta = calc_fake_meta_hash(uid, gid, perms)
+            chmod_meta = calc_fake_meta_hash(uid, gid, S_IMODE(perms))
             close_meta = meta_hash if content_hash else chmod_meta
 
-            self.mediator_state.do_creat(path, file, uid, gid, perms, FileHash())
+            self.mediator_state.do_creat(path, file, uid, gid, perms, FileHash(meta_hash=create_meta))
             self.mediator_state.do_open(ProcFD(0, 3), file)
             self._model_trace.creat(path, 0o777, parent, file, 0, 0o777, 0, bytes(), create_meta, 3, skip_coverage=True)
             self._model_trace.fchown(3, uid, gid, 0, 0, 0o777, 0, chown_meta, 0, skip_coverage=True)
