@@ -21,7 +21,7 @@
 
 struct ima_data {
     __u64 size;
-    __u8 value[HASH_MAX_DIGESTSIZE];
+    __u8 value[2 + HASH_MAX_DIGESTSIZE];
 };
 
 enum events_type {

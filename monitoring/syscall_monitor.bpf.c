@@ -111,6 +111,7 @@ struct {
 
 struct evm_ctx {
     struct evm_digest *digest_ptr;
+    __u8 type;
 };
 
 struct {
@@ -230,6 +231,7 @@ int BPF_KPROBE(handle_evm_calc_hmac_or_hash)
 
     struct evm_ctx ctx_data = {
         .digest_ptr = (struct evm_digest *)ctx->r9,
+        .type = PT_REGS_PARM5(ctx),
     };
     bpf_map_update_elem(&evm_ctx_map, &id, &ctx_data, BPF_ANY);
 
@@ -271,7 +273,9 @@ int BPF_KRETPROBE(handle_evm_calc_hmac_or_hash_ret) {
             "is more that the maximum one (%d)", data.size, HASH_MAX_DIGESTSIZE);
         goto CLEANUP;
     }
-    bpf_probe_read_kernel(&data.value, (__u32)data.size, value_ptr);
+    bpf_probe_read_kernel(&data.value[1], (__u32)data.size, value_ptr);
+    data.value[0] = ictx->type;
+    data.size += 1;
 
     // char hex_str[128] = {}; 
     // int pos = 0;
@@ -393,8 +397,8 @@ END:
 }
 
 
-SEC("kprobe/ima_collect_measurement")
-int BPF_KPROBE(handle_ima_collect_measurement)
+SEC("kprobe/ima_update_xattr")
+int BPF_KPROBE(handle_ima_update_xattr)
 {
     if (!should_monitor()) {
         return 0;
@@ -410,18 +414,18 @@ int BPF_KPROBE(handle_ima_collect_measurement)
     return 0;
 }
 
-SEC("kretprobe/ima_collect_measurement")
-int BPF_KRETPROBE(handle_ima_collect_measurement_ret) {
+SEC("kretprobe/ima_update_xattr")
+int BPF_KRETPROBE(handle_ima_update_xattr_ret) {
     if (!should_monitor()) {
         return 0;
     }
-    bpf_printk("ima_collect_measurement_ret!");
+    bpf_printk("ima_update_xattr_ret!");
 
     u64 id = bpf_get_current_pid_tgid();
 
     struct ima_ctx *ictx;
     if (!(ictx = bpf_map_lookup_elem(&ima_ctx_map, &id))) {
-        bpf_printk("ima_collect_measurement_ret: no ima_ctx found");
+        bpf_printk("ima_update_xattr_ret: no ima_ctx found");
         return 0;
     }
 
@@ -438,14 +442,19 @@ int BPF_KRETPROBE(handle_ima_collect_measurement_ret) {
     //const void *value_ptr = (const void *)BPF_CORE_READ(ima_hash, digest);
 
     __u32 offset = offsetof(struct ima_digest_data, digest);
+    __u32 offset_xattr = offsetof(struct ima_digest_data, xattr);
+
     const void *value_ptr = (const void *)((__u64)ima_hash + offset);
+    const void *data_ptr = (const void *)((__u64)ima_hash + offset_xattr);
     
     if (data.size > HASH_MAX_DIGESTSIZE) {
         bpf_printk("ima_collesct_measurement_ret: digest size (%llu) "
             "is more that the maximum one (%d)", data.size, HASH_MAX_DIGESTSIZE);
         goto CLEANUP;
     }
-    bpf_probe_read_kernel(&data.value, (__u32)data.size, value_ptr);
+    bpf_probe_read_kernel(&data.value[2], (__u32)data.size, value_ptr);
+    bpf_probe_read_kernel(&data.value, 2, data_ptr);
+    data.size += 2;
     // char hex_str[128] = {}; 
     // int pos = 0;
     // for (int i = 0; i < data.size && pos < sizeof(hex_str)-3; i++) {
