@@ -90,10 +90,6 @@ class ProgramMakerTextProducer(ProgramMaker, TextProducer):
 
 class LinuxTestSpec(Protocol):
 
-    def setup_ima_policy(self,
-                         fowner_uid: str) -> None:
-        ...
-
     def make_user(self,
                   user: str,
                   supplementary_groups: Optional[list[str]] = None,
