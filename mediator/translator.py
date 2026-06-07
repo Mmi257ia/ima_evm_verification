@@ -15,9 +15,6 @@ def calc_fake_meta_hash(uid: int | None, gid: int | None, perms: int | None) -> 
     return f"{uid}_{gid}_{perms}".encode()
 
 
-# here we recieve syscalls from monitor
-# TODO update inits with real hashes
-
 class TraceTranslator:
 
     def __init__(self, *, model_trace: ModelTraceConsumer, m: Machine,
@@ -42,7 +39,6 @@ class TraceTranslator:
         self._model_trace.create_user(uid, [primary_gid] + supplementary_gids)
 
 
-    # TODO pass concrete hashes?
     def add_init_folder(self, *, path: str,
                         dev: int, ino: int, uid: int, gid: int, perms: int):
 
@@ -50,14 +46,13 @@ class TraceTranslator:
         self.mediator_state.do_mkdir(path, folder, uid, gid, perms)
         parent = self.mediator_state.get_ino(dirname(path))
         self._model_trace.mkdir(path, 0o777, parent, folder, 0, 0o777, 0, bytes(), bytes(), 0, skip_coverage=True)
-        chown_meta = bytes() if (uid == 0 and gid == 0) else b'\x01'
+        chown_meta = bytes() if (uid == 0 and gid == 0) else calc_fake_meta_hash(uid, gid, 0o777)
         self._model_trace.chown(path, uid, gid, 0, 0, parent, folder, 0o777, 0, chown_meta, 0, skip_coverage=True)
         perm_bits = S_IMODE(perms)
-        chmod_meta = chown_meta if (perm_bits == 0o777) else (b'\x01' if chown_meta == bytes() else bytes())
+        chmod_meta = chown_meta if (perm_bits == 0o777) else calc_fake_meta_hash(uid, gid, perms)
         self._model_trace.chmod(path, perms, parent, folder, perms, 0, chmod_meta, 0, skip_coverage=True)
 
-        self.mediator_state.do_set_integrity_hashes(folder, FileHash())
-        # TODO new meta hash is not saved as evm hash after chmod so using one after `close`
+        self.mediator_state.do_set_integrity_hashes(folder, FileHash(bytes(), chmod_meta))
 
 
     def set_xattrs_init_file(self, *, path: str, xattrs: dict[str, str]):
@@ -68,37 +63,35 @@ class TraceTranslator:
             value_b = bytes.fromhex(value)
             self._model_trace.setxattr(path, name, value_b, len(value_b), 0, parent, folder, 0, 0, skip_coverage=True)
 
-    # TODO pass concrete hashes?
     def add_init_file_or_link(self, *, path: str,
-                      dev: int, ino: int, uid: int, gid: int, perms: int):
+                      dev: int, ino: int, uid: int, gid: int, perms: int,
+                      content_hash: bytes, meta_hash: bytes):
 
         parent = self.mediator_state.get_ino(dirname(path))
         file = Inode(dev, ino,)
         try:
-            oldpath = self.mediator_state.get_path(file) # it is link
+            oldpath = self.mediator_state.get_path(file)
         except:
-            oldpath = None # it is file
+            oldpath = None
 
         if oldpath is not None:
             oldParent = self.mediator_state.get_ino(dirname(oldpath))
             self.mediator_state.do_link(oldpath, path)
             self._model_trace.link(oldpath, path, oldParent, file, parent, 0, 0, skip_coverage=True)
         else:
-            self.mediator_state.do_creat(path, file, uid, gid, perms, FileHash())
-            self._model_trace.creat(path, 0o777, parent, file, 0, 0o777, 0, bytes(), bytes(), 3, skip_coverage=True)
-            self._model_trace.close(3, [ProcFD(0, 3)], 0, bytes(), bytes(), bytes(), bytes(), 0, skip_coverage=True)
-            # Guard для chown: (FileUser=owner ∧ FileGroup=group) ⇔ MetaHash=metaHash
-            # После creat MetaHash=bytes(). Если владелец меняется (uid≠0 или gid≠0) —
-            # левая часть FALSE, нужна правая FALSE: metaHash ≠ bytes()
-            chown_meta = bytes() if (uid == 0 and gid == 0) else b'\x01'
-            self._model_trace.chown(path, uid, gid, 0, 0, parent, file, 0o777, 0, chown_meta, 0, skip_coverage=True)
-            # Guard для chmod: DACPermissions=perms ⇔ MetaHash=metaHash
-            # После creat DACPermissions=0o777. Если perms меняется — нужна правая FALSE: metaHash ≠ chown_meta
+            meta_hash = meta_hash or calc_fake_meta_hash(uid, gid, perms)
+            chown_meta = bytes() if (uid == 0 and gid == 0) else calc_fake_meta_hash(uid, gid, 0o777)
             perm_bits = S_IMODE(perms)
-            chmod_meta = chown_meta if (perm_bits == 0o777) else (b'\x01' if chown_meta == bytes() else bytes())
-            self._model_trace.chmod(path, perms, parent, file, perms, 0, chmod_meta, 0, skip_coverage=True)
-            
-            self.mediator_state.do_set_integrity_hashes(file, FileHash(content_hash=bytes(), meta_hash=bytes()))
+            chmod_meta = chown_meta if (perm_bits == 0o777) else calc_fake_meta_hash(uid, gid, perms)
+            close_meta = meta_hash if content_hash else chmod_meta
+
+            self.mediator_state.do_creat(path, file, uid, gid, perms, FileHash())
+            self.mediator_state.do_open(ProcFD(0, 3), file)
+            self._model_trace.creat(path, 0o777, parent, file, 0, 0o777, 0, bytes(), bytes(), 3, skip_coverage=True)
+            self._model_trace.fchown(3, uid, gid, 0, 0, 0o777, 0, chown_meta, 0, skip_coverage=True)
+            self._model_trace.fchmod(3, perms, perms, 0, chmod_meta, 0, skip_coverage=True)
+            self._model_trace.close(3, [ProcFD(0, 3)], 0, content_hash, close_meta, content_hash, close_meta, 0, skip_coverage=True)
+            self.mediator_state.do_close(ProcFD(0, 3), FileHash(content_hash, close_meta))
 
     def set_init_acl(self, *, data: list[tuple[str, list[str]]]):
 
@@ -435,9 +428,7 @@ class TraceTranslator:
         fds = set[int]() # O_CLOEXEC is not modelled yet
         self._model_trace.execve(pathname, argv, envp, fds, parent, exeFile, pid, retval)
 
-    def close(self, fd: int, pid: int, contentHash: bytes, metaHash: bytes, retval: int):
-        # contentHash / metaHash — текущие хеши файла от монитора (ima_collect_measurement / evm)
-        
+    def close(self, fd: int, pid: int, contentHash: Optional[bytes], metaHash: Optional[bytes], retval: int):
         proc_fd = ProcFD(pid, fd)
         ino = self.mediator_state.get_ino_of_fd(proc_fd)
 

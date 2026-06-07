@@ -39,8 +39,7 @@ class Snapshot:
     files: dict[str, StatLine] = field(default_factory=dict[str, StatLine])
     files_xattrs: list[Xattrs] = field(default_factory=list[Xattrs])
     acl: list[tuple[str, list[str]]] = field(default_factory=list[tuple[str, list[str]]])
-    # TODO add hashes here for init files and dirs from monitor???
-    hashes: dict[str, tuple[bytes, bytes]] = ...
+    hashes: dict[str, tuple[bytes, bytes]] = field(default_factory=dict[str, tuple[bytes, bytes]])
 
 
 class SnapshotBuilder:
@@ -158,7 +157,15 @@ class SnapshotBuilder:
         for path in self._init_dirs + self._init_files:
             snapshot.acl.append(self._parse_getfacl_output(trace))
 
+        for xattrs in snapshot.folders_xattrs + snapshot.files_xattrs:
+            snapshot.hashes[xattrs.path] = self._extract_hashes(xattrs)
+
         return snapshot
+
+    def _extract_hashes(self, xattrs: 'Xattrs') -> tuple[bytes, bytes]:
+        ima = bytes.fromhex(xattrs.xattrs['security.ima']) if 'security.ima' in xattrs.xattrs else bytes()
+        evm = bytes.fromhex(xattrs.xattrs['security.evm']) if 'security.evm' in xattrs.xattrs else bytes()
+        return (ima, evm)
 
     def _parse_stat_line(self, line: str):
         path, sdev, sino, suid, sgid, srawmode = line.strip().split(',')

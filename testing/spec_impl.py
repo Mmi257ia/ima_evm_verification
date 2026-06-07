@@ -453,8 +453,10 @@ class LinuxTestSpecImpl(LinuxTestSpec):
             tt.set_xattrs_init_file(path=attrs.path, xattrs = attrs.xattrs)
 
         for path, s in snapshot.files.items():
+            h = snapshot.hashes.get(path, (bytes(), bytes()))
             tt.add_init_file_or_link(path=path, dev=s.dev, ino=s.ino,
-                                     uid=s.uid, gid=s.gid, perms=s.perms)
+                                     uid=s.uid, gid=s.gid, perms=s.perms,
+                                     content_hash=h[0], meta_hash=h[1])
 
         for attrs in snapshot.files_xattrs:
             tt.set_xattrs_init_file(path=attrs.path, xattrs = attrs.xattrs)
