@@ -43,13 +43,18 @@ class TraceTranslator:
                         dev: int, ino: int, uid: int, gid: int, perms: int):
 
         folder = Inode(dev, ino,)
+        parent = self.mediator_state.get_ino(dirname(path))
+        
         mkdir_meta = calc_fake_meta_hash(0, 0, 0o777)
         self.mediator_state.do_mkdir(path, folder, uid, gid, perms, FileHash(meta_hash=mkdir_meta))
-        parent = self.mediator_state.get_ino(dirname(path))
         self._model_trace.mkdir(path, 0o777, parent, folder, 0, 0o777, 0, bytes(), mkdir_meta, 0, skip_coverage=True)
+        
         chown_meta = calc_fake_meta_hash(uid, gid, 0o777)
+        self.mediator_state.do_chown(folder, uid, gid, chown_meta)
         self._model_trace.chown(path, uid, gid, 0, 0, parent, folder, 0o777, 0, chown_meta, 0, skip_coverage=True)
+        
         chmod_meta = calc_fake_meta_hash(uid, gid, perms)
+        self.mediator_state.do_chmod(folder, perms, chmod_meta)
         self._model_trace.chmod(path, perms, parent, folder, perms, 0, chmod_meta, 0, skip_coverage=True)
 
         self.mediator_state.do_set_integrity_hashes(folder, FileHash(bytes(), chmod_meta))
@@ -275,7 +280,8 @@ class TraceTranslator:
         file = self.mediator_state.get_ino(abspath)
         filestat = self.mediator_state.do_stat(file)
 
-        # get cached hashes if parameters are not passed
+        # get cached hashes if parameters are not passed 
+        # TODO distinguish when to use old hash and when to use fake hash!!!! (default vs None?)
         metaHash = metaHash or self.mediator_state.get_real_hashes(file).meta_hash or calc_fake_meta_hash(filestat.st_uid, filestat.st_gid, perms)
 
         self._model_trace.chmod(pathname, mode, parent, file, perms, pid, metaHash, retval)
