@@ -28,20 +28,21 @@ def test_open_exists_methodic_2(t: LinuxTestSpec, access_mode):
     ima_user = 'ima_user'
     t.make_user(ima_user, uid=policy_uid)
 
-    t.make_dir('/dir', ima_user, ima_user, 0o755)
-    t.make_file('/dir/file', owner=ima_user, group=ima_user, mode=0o666)
+    ima_evm_dir = 'ima_evm_dir'
+    t.make_dir(f'/{ima_evm_dir}/dir', ima_user, ima_user, 0o755)
+    t.make_file(f'/{ima_evm_dir}/dir/file', owner=ima_user, group=ima_user, mode=0o666)
 
-    t.add_setup(f'echo "test content" > /dir/file')
+    t.add_setup(f'echo "test content" > /{ima_evm_dir}/dir/file')
 
     try:
-        with t.make_program_and_run(ima_user, ima_user, umask=0) as child:
+        with t.make_program_and_run(ima_user, ima_user, ima_evm_dir=ima_evm_dir, umask=0) as child:
             # read should success
             # write/rdwd should fail 
             if should_succeed:
-                fd = child.open('/dir/file', flags, 0, fatal=True)
+                fd = child.open(f'/{ima_evm_dir}/dir/file', flags, 0, fatal=True)
                 child.close(fd)
             else:
-                fd = child.open('/dir/file', flags, 0, fatal=True)
+                fd = child.open(f'/{ima_evm_dir}/dir/file', flags, 0, fatal=True)
 
     except AssertionError as e:
         if should_succeed:

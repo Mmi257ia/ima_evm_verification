@@ -16,14 +16,15 @@ def test_open_create_methodic_2(t: LinuxTestSpec, access_mode):
     ima_user = 'ima_user'
     t.make_user(ima_user, uid=policy_uid)
 
-    t.make_dir('/dir', ima_user, ima_user, 0o777)
-    t.add_setup('chattr +i /dir')
+    ima_evm_dir = 'ima_evm_dir'
+    t.make_dir(f'/{ima_evm_dir}/dir', ima_user, ima_user, 0o777)
+    t.add_setup(f'chattr +i /{ima_evm_dir}/dir')
     
-    new_file_path = '/dir/new_file'
+    new_file_path = f'/{ima_evm_dir}/dir/new_file'
 
     try:
-        with t.make_program_and_run(ima_user, ima_user, umask=0) as child:
-            # should fail because immutable parent  
+        with t.make_program_and_run(ima_user, ima_user, ima_evm_dir=ima_evm_dir, umask=0) as child:
+            # should fail because immutable parent
             child.open(new_file_path, flags, 0o666)
             raise Exception("ERROR")
 

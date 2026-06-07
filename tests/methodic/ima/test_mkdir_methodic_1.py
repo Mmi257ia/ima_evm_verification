@@ -10,10 +10,11 @@ def test_mkdir_methodic_1(t: LinuxTestSpec):
     ima_user = 'ima_user'
     t.make_user(ima_user, uid=policy_uid)
 
-    t.make_dir('/parent_dir', ima_user, ima_user, 0o755)
+    ima_evm_dir = 'ima_evm_dir'
+    t.make_dir(f'/{ima_evm_dir}/parent_dir', ima_user, ima_user, 0o755)
     
-    new_dir_path = '/parent_dir/new_subdir'
+    new_dir_path = f'/{ima_evm_dir}/parent_dir/new_subdir'
 
-    with t.make_program_and_run(ima_user, ima_user, umask=0) as child:
+    with t.make_program_and_run(ima_user, ima_user, ima_evm_dir=ima_evm_dir, umask=0) as child:
         # should pass
         child.mkdir(new_dir_path, 0o755, fatal=True)
