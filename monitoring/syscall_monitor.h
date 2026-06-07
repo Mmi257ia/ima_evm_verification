@@ -24,21 +24,29 @@ struct ima_data {
     __u8 value[HASH_MAX_DIGESTSIZE];
 };
 
+enum events_type {
+    SYSCALL_EVENT,
+    FPUT_EVENT
+};
+
 struct syscall_event {
     __u64 ts;
 
-    __s64 ret;
-    __u32 syscall_nr;
+    __u32 type;
     char comm[TASK_COMM_LEN];
     __u32 pid;
     __u32 tgid;
     __u32 euid;
     __u32 egid;
 
-    /* Copy of userspace registers. */
-    unsigned long args[6];
-
     union {
+     struct syscall_event_small {
+        __u32 syscall_nr;
+        __s64 ret;
+        /* Copy of userspace registers. */
+        unsigned long args[6];
+
+        union {
         struct {
             char pathname[PATH_SIZE];
             int flags;
@@ -117,8 +125,8 @@ struct syscall_event {
         } fchown;
         struct {
             unsigned int fd;
-            struct ima_data ima_hash;
-            struct ima_data evm_hash;
+            unsigned ino;
+            unsigned dev;
         } close;
         struct {
             int mask;
@@ -172,6 +180,14 @@ struct syscall_event {
         struct {
             int error_code;
         } exit;
+        };
+     } syscall;
+     struct {
+        unsigned ino;
+        unsigned dev;
+        struct ima_data ima_hash;
+        struct ima_data evm_hash;
+     } fput;
     };
 } __attribute__((packed));
 

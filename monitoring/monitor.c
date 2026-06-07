@@ -129,6 +129,16 @@ static inline bool is_string(const uint8_t *buf, size_t len)
     return i != len;
 }
 
+#define MINORBITS  20
+#define MINORMASK  ((1U << MINORBITS) - 1)
+
+#define MAJOR(dev)  ((unsigned int) ((dev) >> MINORBITS))
+#define MINOR(dev)  ((unsigned int) ((dev) & MINORMASK))
+static __always_inline unsigned old_encode_dev(unsigned dev)
+{
+  return (MAJOR(dev) << 8) | MINOR(dev);
+}
+
 #define field_size(type, member) sizeof(((type *)0)->member)
 
 char base64_xattr[(field_size(struct getxattr, value) + 2) / 3 * 4 + 1];
@@ -162,128 +172,137 @@ static int handle_event(void *ctx, void *data, size_t len)
     char evm_hash_hex[129];
     evm_hash_hex[0] = '\0';
 
+    if (e->type == FPUT_EVENT) {
+        printf("{ \"call\": \"__fput\", \"proc\": \"%s\", \"pid\": %d, \"euid\": %d, \"egid\": %d, ",
+        e->comm, e->pid, e->euid, e->egid);
+        hex_encode(e->fput.ima_hash.value, e->fput.ima_hash.size, ima_hash_hex);
+        hex_encode(e->fput.evm_hash.value, e->fput.evm_hash.size, evm_hash_hex);
+        printf(
+            "\"ino\": %u, \"dev\": %u, \"contentHash\": \"%s\", \"contentHashLen\": \"%llu\", \"metaHash\": \"%s\", \"metaHashLen\": \"%llu\"}\n",
+            e->fput.ino, old_encode_dev(e->fput.dev), ima_hash_hex, e->fput.ima_hash.size, evm_hash_hex, e->fput.evm_hash.size);
+        return 0;
+    }
+    
     printf("{ \"syscall\": \"%s\", \"proc\": \"%s\", \"pid\": %d, \"euid\": %d, \"egid\": %d, ",
-        syscall_names[e->syscall_nr], e->comm,
+        syscall_names[e->syscall.syscall_nr], e->comm,
         e->pid, e->euid, e->egid);
 
-    switch (e->syscall_nr) {
+    switch (e->syscall.syscall_nr) {
     case SYS_open: printf(
             "\"pathname\": \"%s\", \"flags\": %d, \"mode\": %d, "
             "\"uid\": %u, \"gid\": %u, "
             "\"ino\": %u, \"perms\": %u, ",
-            e->open.pathname, e->open.flags,
-            e->open.mode, e->open.uid,
-            e->open.gid, e->open.ino,
-            e->open.perms);
+            e->syscall.open.pathname, e->syscall.open.flags,
+            e->syscall.open.mode, e->syscall.open.uid,
+            e->syscall.open.gid, e->syscall.open.ino,
+            e->syscall.open.perms);
         break;
     case SYS_openat: printf(
             "\"dfd\": %d, \"pathname\": \"%s\", \"flags\": %d, "
             "\"mode\": %d, \"uid\": %u, \"gid\": %u, "
             "\"ino\": %u, \"perms\": %u, ",
-            e->openat.dfd, e->openat.pathname,
-            e->openat.flags, e->openat.mode,
-            e->openat.uid, e->openat.gid,
-            e->openat.ino, e->openat.perms);
+            e->syscall.openat.dfd, e->syscall.openat.pathname,
+            e->syscall.openat.flags, e->syscall.openat.mode,
+            e->syscall.openat.uid, e->syscall.openat.gid,
+            e->syscall.openat.ino, e->syscall.openat.perms);
         break;
     case SYS_creat: printf(
             "\"pathname\": \"%s\", \"mode\": %d, "
             "\"uid\": %u, \"gid\": %u, "
             "\"ino\": %u, \"perms\": %u, ",
-            e->creat.pathname, e->creat.mode,
-            e->creat.uid, e->creat.gid,
-            e->creat.ino, e->creat.perms);
+            e->syscall.creat.pathname, e->syscall.creat.mode,
+            e->syscall.creat.uid, e->syscall.creat.gid,
+            e->syscall.creat.ino, e->syscall.creat.perms);
         break;
     case SYS_mkdir: printf("\"pathname\": \"%s\", \"mode\": %d, "
             "\"uid\": %u, \"gid\": %u, "
             "\"ino\": %u, \"perms\": %u, ",
-            e->mkdir.pathname, e->mkdir.mode,
-            e->mkdir.uid, e->mkdir.gid,
-            e->mkdir.ino, e->mkdir.perms);
+            e->syscall.mkdir.pathname, e->syscall.mkdir.mode,
+            e->syscall.mkdir.uid, e->syscall.mkdir.gid,
+            e->syscall.mkdir.ino, e->syscall.mkdir.perms);
         break;
     case SYS_mkdirat: printf(
             "\"dfd\": %d, \"pathname\": \"%s\", \"mode\": %d, "
             "\"uid\": %u, \"gid\": %u, "
             "\"ino\": %u, \"perms\": %u, ",
-            e->mkdirat.dfd, e->mkdirat.pathname,
-            e->mkdirat.mode, e->mkdirat.uid,
-            e->mkdirat.gid, e->mkdirat.ino,
-            e->mkdirat.perms);
+            e->syscall.mkdirat.dfd, e->syscall.mkdirat.pathname,
+            e->syscall.mkdirat.mode, e->syscall.mkdirat.uid,
+            e->syscall.mkdirat.gid, e->syscall.mkdirat.ino,
+            e->syscall.mkdirat.perms);
         break;
     case SYS_chdir: printf(
             "\"dir\": \"%s\", ",
-            e->chdir.dir);
+            e->syscall.chdir.dir);
         break;
     case SYS_fchdir: printf(
             "\"fd\": %d, ",
-            e->fchdir.fd);
+            e->syscall.fchdir.fd);
         break;
     case SYS_chmod: 
-        hex_encode(e->chmod.evm_hash.value, e->chmod.evm_hash.size, evm_hash_hex);
+        hex_encode(e->syscall.chmod.evm_hash.value, e->syscall.chmod.evm_hash.size, evm_hash_hex);
         printf(
             "\"pathname\": \"%s\", \"mode\": %d, \"perms\": %u, \"metaHash\": \"%s\", \"metaHashLen\": \"%llu\",",
-            e->chmod.pathname, e->chmod.mode,
-            e->chmod.perms, evm_hash_hex, e->chmod.evm_hash.size);
+            e->syscall.chmod.pathname, e->syscall.chmod.mode,
+            e->syscall.chmod.perms, evm_hash_hex, e->syscall.chmod.evm_hash.size);
         break;
     case SYS_fchmod: 
-        hex_encode(e->fchmod.evm_hash.value, e->fchmod.evm_hash.size, evm_hash_hex);
+        hex_encode(e->syscall.fchmod.evm_hash.value, e->syscall.fchmod.evm_hash.size, evm_hash_hex);
         printf(
             "\"fd\": %d, \"mode\": %d, \"perms\": %u, \"metaHash\": \"%s\", \"metaHashLen\": \"%llu\", ",
-            e->fchmod.fd, e->fchmod.mode,
-            e->fchmod.perms, evm_hash_hex, e->fchmod.evm_hash.size);
+            e->syscall.fchmod.fd, e->syscall.fchmod.mode,
+            e->syscall.fchmod.perms, evm_hash_hex, e->syscall.fchmod.evm_hash.size);
         break;
     case SYS_chown: 
-        hex_encode(e->chown.evm_hash.value, e->chown.evm_hash.size, evm_hash_hex);
+        hex_encode(e->syscall.chown.evm_hash.value, e->syscall.chown.evm_hash.size, evm_hash_hex);
         printf(
             "\"pathname\": \"%s\", \"owner\": %d, \"group\": %d, \"perms\": %u, \"metaHash\": \"%s\", \"metaHashLen\": \"%llu\",",
-            e->chown.pathname, e->chown.owner,
-            e->chown.group, e->chown.perms, evm_hash_hex, e->chown.evm_hash.size);
+            e->syscall.chown.pathname, e->syscall.chown.owner,
+            e->syscall.chown.group, e->syscall.chown.perms, evm_hash_hex, e->syscall.chown.evm_hash.size);
         break;
     case SYS_fchown: 
-        hex_encode(e->fchown.evm_hash.value, e->fchown.evm_hash.size, evm_hash_hex);
+        hex_encode(e->syscall.fchown.evm_hash.value, e->syscall.fchown.evm_hash.size, evm_hash_hex);
         printf(
             "\"fd\": \"%d\", \"owner\": %d, \"group\": %d, \"perms\": %u, \"metaHash\": \"%s\", \"metaHashLen\": \"%llu\",",
-            e->fchown.fd, e->fchown.owner,
-            e->fchown.group, e->fchown.perms, evm_hash_hex, e->fchown.evm_hash.size);
+            e->syscall.fchown.fd, e->syscall.fchown.owner,
+            e->syscall.fchown.group, e->syscall.fchown.perms, evm_hash_hex, e->syscall.fchown.evm_hash.size);
         break;
     case SYS_close: 
-        hex_encode(e->close.ima_hash.value, e->close.ima_hash.size, ima_hash_hex);
-        hex_encode(e->close.evm_hash.value, e->close.evm_hash.size, evm_hash_hex);
         printf(
-            "\"fd\": %u, \"contentHash\": \"%s\", \"contentHashLen\": \"%llu\", \"metaHash\": \"%s\", \"metaHashLen\": \"%llu\", ",
-            e->close.fd, ima_hash_hex, e->close.ima_hash.size, evm_hash_hex, e->close.evm_hash.size);
+            "\"fd\": %u, \"ino\": %u, \"dev\": %u,",
+            e->syscall.close.fd, e->syscall.close.ino, old_encode_dev(e->syscall.close.dev));
         break;
     case SYS_umask: printf(
             "\"mask\": %d,",
-            e->umask.mask);
+            e->syscall.umask.mask);
         break;
     case SYS_unlink: printf(
             "\"pathname\": \"%s\",",
-            e->unlink.pathname);
+            e->syscall.unlink.pathname);
         break;
     case SYS_rmdir: printf(
             "\"pathname\": \"%s\",",
-            e->rmdir.pathname);
+            e->syscall.rmdir.pathname);
         break;
     case SYS_getdents: printf(
             "\"fd\": %u,",
-            e->getdents.fd);
+            e->syscall.getdents.fd);
         break;
     case SYS_symlink: 
-        hex_encode(e->symlink.ima_hash.value, e->symlink.ima_hash.size, ima_hash_hex);
-        hex_encode(e->symlink.evm_hash.value, e->symlink.evm_hash.size, evm_hash_hex);
+        hex_encode(e->syscall.symlink.ima_hash.value, e->syscall.symlink.ima_hash.size, ima_hash_hex);
+        hex_encode(e->syscall.symlink.evm_hash.value, e->syscall.symlink.evm_hash.size, evm_hash_hex);
         printf(
             "\"oldname\": \"%s\", \"newname\": \"%s\", \"contentHash\": \"%s\", \"contentHashLen\": \"%llu\", \"metaHash\": \"%s\", \"metaHashLen\": \"%llu\",",
-            e->symlink.oldname, e->symlink.newname, ima_hash_hex, e->symlink.ima_hash.size, evm_hash_hex, e->symlink.evm_hash.size);
+            e->syscall.symlink.oldname, e->syscall.symlink.newname, ima_hash_hex, e->syscall.symlink.ima_hash.size, evm_hash_hex, e->syscall.symlink.evm_hash.size);
         break;
     case SYS_link: printf(
             "\"oldname\": \"%s\", \"newname\": \"%s\",",
-            e->link.oldname, e->link.newname);
+            e->syscall.link.oldname, e->syscall.link.newname);
         break;
     case SYS_getxattr: {
         char *decoded_value;
-        __u8 *raw_value = e->getxattr.value;
-        __u64 raw_size = e->getxattr.size;
-        ssize_t size = e->ret;        
+        __u8 *raw_value = e->syscall.getxattr.value;
+        __u64 raw_size = e->syscall.getxattr.size;
+        ssize_t size = e->syscall.ret;        
         if (raw_size <= 0 || size <= 0) {
             decoded_value = ""; // getxattr fails
         } else if (is_string(raw_value, size + 1)) {
@@ -293,7 +312,7 @@ static int handle_event(void *ctx, void *data, size_t len)
                 base64_decode(raw_value, base64_xattr);
                 decoded_value = base64_xattr;
             } else {
-                static char raw[sizeof e->getxattr.value];
+                static char raw[sizeof e->syscall.getxattr.value];
                 strncpy(raw, (char *)raw_value, size);
                 raw[size] = '\0';
                 decoded_value = raw;
@@ -306,7 +325,7 @@ static int handle_event(void *ctx, void *data, size_t len)
         printf(
             "\"pathname\": \"%s\", \"name\": \"%s\", "
             "\"value\": \"%s\", \"size\": %llu,",
-            e->getxattr.pathname, e->getxattr.name, decoded_value,
+            e->syscall.getxattr.pathname, e->syscall.getxattr.name, decoded_value,
             raw_size);
         break;
     }
@@ -324,29 +343,29 @@ static int handle_event(void *ctx, void *data, size_t len)
         printf(
             "\"pathname\": \"%s\", \"name\": \"%s\", "
             "\"value\": \"%s\", \"size\": %llu, \"flags\": %d,",
-            e->setxattr.pathname, e->setxattr.name, e->setxattr.value,
-            e->setxattr.size, e->setxattr.flags);
+            e->syscall.setxattr.pathname, e->syscall.setxattr.name, e->syscall.setxattr.value,
+            e->syscall.setxattr.size, e->syscall.setxattr.flags);
         break;
     }
     case SYS_execve: printf(
               "\"pathname\": \"%s\", "
               "\"umask\": %d, ",
-              e->execve.pathname,
-              e->execve.umask);
+              e->syscall.execve.pathname,
+              e->syscall.execve.umask);
         break;
     case SYS_exit: printf(
               "\"error_code\": %d,",
-              e->exit.error_code);
+              e->syscall.exit.error_code);
         break;
     case SYS_exit_group: printf(
               "\"error_code\": %d,",
-              e->exit_group.error_code);
+              e->syscall.exit_group.error_code);
         break;
     default:
-        fprintf(stderr, "Unknown syscall %d\n", e->syscall_nr);
+        fprintf(stderr, "Unknown syscall %d\n", e->syscall.syscall_nr);
         abort();
     }
-    printf(" \"ret\": %lld }\n", e->ret);
+    printf(" \"ret\": %lld }\n", e->syscall.ret);
 
     return 0;
 }

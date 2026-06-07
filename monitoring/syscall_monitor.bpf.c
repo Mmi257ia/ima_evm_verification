@@ -79,6 +79,18 @@ struct {
     __type(value, struct chmod_data);
 } chmod_data_map SEC(".maps");
 
+struct fput_data {
+    unsigned ino;
+    unsigned dev;
+};
+
+struct {
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(max_entries, 10240);
+    __type(key, u64);
+    __type(value, struct fput_data);
+} fput_data_map SEC(".maps");
+
 struct ima_ctx {
     struct integrity_iint_cache *iint_cache;
 };
@@ -261,15 +273,15 @@ int BPF_KRETPROBE(handle_evm_calc_hmac_or_hash_ret) {
     }
     bpf_probe_read_kernel(&data.value, (__u32)data.size, value_ptr);
 
-    char hex_str[128] = {}; 
-    int pos = 0;
-    for (int i = 0; i < data.size && pos < sizeof(hex_str)-3; i++) {
-        unsigned char byte = data.value[i];
-        hex_str[pos++] = "0123456789abcdef"[byte >> 4];
-        hex_str[pos++] = "0123456789abcdef"[byte & 0x0F];
-    }
-    hex_str[pos] = '\0';
-    bpf_printk("EVM HMAC (%d): %s\n", data.size, hex_str);
+    // char hex_str[128] = {}; 
+    // int pos = 0;
+    // for (int i = 0; i < data.size && pos < sizeof(hex_str)-3; i++) {
+    //     unsigned char byte = data.value[i];
+    //     hex_str[pos++] = "0123456789abcdef"[byte >> 4];
+    //     hex_str[pos++] = "0123456789abcdef"[byte & 0x0F];
+    // }
+    // hex_str[pos] = '\0';
+    // bpf_printk("EVM HMAC (%d): %s\n", data.size, hex_str);
 
     bpf_map_update_elem(&evm_data_map, &id, &data, BPF_ANY);
 
@@ -277,6 +289,109 @@ CLEANUP:
     bpf_map_delete_elem(&evm_ctx_map, &id);
     return 0;
 }
+
+static __always_inline
+struct syscall_event *
+read_main_args()
+{
+    if (!should_monitor()) {
+        return 0;
+    }
+
+    struct syscall_event *e = bpf_ringbuf_reserve(&events, sizeof *e, 0);
+    if (!e) {
+        bpf_printk("ringbuffer overflow");
+        return 0;
+    }
+
+    e->ts = bpf_ktime_get_ns();
+
+    u64 pid_tgid = bpf_get_current_pid_tgid();
+    e->pid = pid_tgid & ((1uLL << 32) - 1);
+    e->tgid = pid_tgid >> 32;
+
+    u64 uid_gid = bpf_get_current_uid_gid();
+    e->euid = uid_gid & ((1uLL << 32) - 1);
+    e->egid = uid_gid >> 32;
+
+    bpf_get_current_comm(&e->comm, sizeof e->comm);
+
+    return e;
+}
+
+
+SEC("kprobe/__fput")
+int BPF_KPROBE(handle___fput)
+{
+    if (!should_monitor()) {
+        return 0;
+    }
+
+    u64 id = bpf_get_current_pid_tgid();
+
+    struct file *f = (struct file *)PT_REGS_PARM1(ctx);
+    if (!f) {
+        return 0;
+    }
+    struct fput_data data = {};
+    const struct inode *i = bpf_file_inode(f);
+    data.ino = BPF_CORE_READ(i, i_ino);
+    struct super_block *sb = BPF_CORE_READ(i, i_sb);
+    data.dev = BPF_CORE_READ(sb, s_dev);
+    bpf_map_update_elem(&fput_data_map, &id, &data, BPF_ANY);
+
+    return 0;
+}
+
+SEC("kretprobe/__fput")
+int BPF_KRETPROBE(handle___fput_ret) {
+    struct syscall_event *e;
+    if (!(e = read_main_args())) {
+        return 0;
+    }
+    bpf_printk("__fput_ret!");
+    e->type = FPUT_EVENT;
+
+    u64 pid_tgid = bpf_get_current_pid_tgid();
+    struct fput_data *data;
+    if (!(data = bpf_map_lookup_elem(&fput_data_map, &pid_tgid))) {
+        bpf_printk("execve without saved data");
+        goto END;
+    } else {
+        e->fput.ino = data->ino;
+        e->fput.dev = data->dev;
+        bpf_map_delete_elem(&fput_data_map, &pid_tgid);
+    }
+    
+    e->fput.ima_hash.size = 0;
+    e->fput.ima_hash.value[0] = 0;
+    e->fput.evm_hash.size = 0;
+    e->fput.evm_hash.value[0] = 0;
+
+    struct ima_data *ima_data;
+    if (!(ima_data = bpf_map_lookup_elem(&ima_data_map, &pid_tgid))) {
+        bpf_printk("fput without saved ima data");
+        goto END;
+    }
+
+    __builtin_memcpy(&e->fput.ima_hash, ima_data, sizeof(e->fput.ima_hash));
+
+    bpf_map_delete_elem(&ima_data_map, &pid_tgid);
+
+    struct ima_data *evm_data;
+    if (!(evm_data = bpf_map_lookup_elem(&evm_data_map, &pid_tgid))) {
+        bpf_printk("fput without saved evm data");
+        goto END;
+    }
+
+    __builtin_memcpy(&e->fput.evm_hash, evm_data, sizeof(e->fput.evm_hash));
+
+    bpf_map_delete_elem(&evm_data_map, &pid_tgid);
+END:
+    bpf_ringbuf_submit(e, 0);
+    return 0;
+}
+
 
 SEC("kprobe/ima_collect_measurement")
 int BPF_KPROBE(handle_ima_collect_measurement)
@@ -331,15 +446,15 @@ int BPF_KRETPROBE(handle_ima_collect_measurement_ret) {
         goto CLEANUP;
     }
     bpf_probe_read_kernel(&data.value, (__u32)data.size, value_ptr);
-   char hex_str[128] = {}; 
-    int pos = 0;
-    for (int i = 0; i < data.size && pos < sizeof(hex_str)-3; i++) {
-        unsigned char byte = data.value[i];
-        hex_str[pos++] = "0123456789abcdef"[byte >> 4];
-        hex_str[pos++] = "0123456789abcdef"[byte & 0x0F];
-    }
-    hex_str[pos] = '\0';
-    bpf_printk("IMA (%d): %s\n", data.size, hex_str);
+    // char hex_str[128] = {}; 
+    // int pos = 0;
+    // for (int i = 0; i < data.size && pos < sizeof(hex_str)-3; i++) {
+    //     unsigned char byte = data.value[i];
+    //     hex_str[pos++] = "0123456789abcdef"[byte >> 4];
+    //     hex_str[pos++] = "0123456789abcdef"[byte & 0x0F];
+    // }
+    // hex_str[pos] = '\0';
+    // bpf_printk("IMA (%d): %s\n", data.size, hex_str);
 
 
     bpf_map_update_elem(&ima_data_map, &id, &data, BPF_ANY);
@@ -497,28 +612,17 @@ read_syscall_args(struct trace_event_raw_sys_exit *ctx)
     }
     bpf_map_delete_elem(&args_map, &key);
 
-    struct syscall_event *e = bpf_ringbuf_reserve(&events, sizeof *e, 0);
+    struct syscall_event *e = read_main_args();
     if (!e) {
-        bpf_printk("ringbuffer overflow");
         return 0;
     }
 
-    e->ts = bpf_ktime_get_ns();
-
-    u64 pid_tgid = bpf_get_current_pid_tgid();
-    e->pid = pid_tgid & ((1uLL << 32) - 1);
-    e->tgid = pid_tgid >> 32;
-
-    u64 uid_gid = bpf_get_current_uid_gid();
-    e->euid = uid_gid & ((1uLL << 32) - 1);
-    e->egid = uid_gid >> 32;
-
-    bpf_get_current_comm(&e->comm, sizeof e->comm);
+    e->type = SYSCALL_EVENT;
     
-    e->syscall_nr = ctx->id;
-    __builtin_memcpy(e->args, args->args, sizeof e->args);
+    e->syscall.syscall_nr = ctx->id;
+    __builtin_memcpy(e->syscall.args, args->args, sizeof e->syscall.args);
 
-    e->ret = ctx->ret;
+    e->syscall.ret = ctx->ret;
 
     return e;
 }
@@ -537,22 +641,22 @@ int trace_exit_open(struct trace_event_raw_sys_exit *ctx)
         return 0;
     }
 
-    bpf_get_path(e->open.pathname, (const char *)e->args[0]);
-    e->open.flags = e->args[1];
-    e->open.mode = e->args[2];
+    bpf_get_path(e->syscall.open.pathname, (const char *)e->syscall.args[0]);
+    e->syscall.open.flags = e->syscall.args[1];
+    e->syscall.open.mode = e->syscall.args[2];
 
-    if (e->ret < 0) {
+    if (e->syscall.ret < 0) {
         goto END;
     }
 
     struct task_struct *task = (struct task_struct *)bpf_get_current_task();
-    const struct file *file = bpf_get_task_file(task, e->ret);
+    const struct file *file = bpf_get_task_file(task, e->syscall.ret);
     const struct inode *i = bpf_file_inode(file);
 
-    e->open.uid = BPF_CORE_READ(i, i_uid).val;
-    e->open.gid = BPF_CORE_READ(i, i_gid).val;
-    e->open.ino = BPF_CORE_READ(i, i_ino);
-    e->open.perms = BPF_CORE_READ(i, i_mode);
+    e->syscall.open.uid = BPF_CORE_READ(i, i_uid).val;
+    e->syscall.open.gid = BPF_CORE_READ(i, i_gid).val;
+    e->syscall.open.ino = BPF_CORE_READ(i, i_ino);
+    e->syscall.open.perms = BPF_CORE_READ(i, i_mode);
 
 END:
     bpf_ringbuf_submit(e, 0);
@@ -573,23 +677,23 @@ int trace_exit_openat(struct trace_event_raw_sys_exit *ctx)
         return 0;
     }
 
-    e->openat.dfd = e->args[0];
-    bpf_get_path(e->openat.pathname, (const char *)e->args[1]);
-    e->openat.flags = e->args[2];
-    e->openat.mode = e->args[3];
+    e->syscall.openat.dfd = e->syscall.args[0];
+    bpf_get_path(e->syscall.openat.pathname, (const char *)e->syscall.args[1]);
+    e->syscall.openat.flags = e->syscall.args[2];
+    e->syscall.openat.mode = e->syscall.args[3];
 
-    if (e->ret < 0) {
+    if (e->syscall.ret < 0) {
         goto END;
     }
 
     struct task_struct *task = (struct task_struct *)bpf_get_current_task();
-    const struct file *file = bpf_get_task_file(task, e->ret);
+    const struct file *file = bpf_get_task_file(task, e->syscall.ret);
     const struct inode *i = bpf_file_inode(file);
 
-    e->openat.uid = BPF_CORE_READ(i, i_uid).val;
-    e->openat.gid = BPF_CORE_READ(i, i_gid).val;
-    e->openat.ino = BPF_CORE_READ(i, i_ino);
-    e->openat.perms = BPF_CORE_READ(i, i_mode);
+    e->syscall.openat.uid = BPF_CORE_READ(i, i_uid).val;
+    e->syscall.openat.gid = BPF_CORE_READ(i, i_gid).val;
+    e->syscall.openat.ino = BPF_CORE_READ(i, i_ino);
+    e->syscall.openat.perms = BPF_CORE_READ(i, i_mode);
 
 END:
     bpf_ringbuf_submit(e, 0);
@@ -610,21 +714,21 @@ int trace_exit_creat(struct trace_event_raw_sys_exit *ctx)
         return 0;
     }
 
-    bpf_get_path(e->creat.pathname, (const char *)e->args[0]);
-    e->creat.mode = e->args[1];
+    bpf_get_path(e->syscall.creat.pathname, (const char *)e->syscall.args[0]);
+    e->syscall.creat.mode = e->syscall.args[1];
 
-    if (e->ret < 0) {
+    if (e->syscall.ret < 0) {
         goto END;
     }
 
     struct task_struct *task = (struct task_struct *)bpf_get_current_task();
-    const struct file *file = bpf_get_task_file(task, e->ret);
+    const struct file *file = bpf_get_task_file(task, e->syscall.ret);
     const struct inode *i = bpf_file_inode(file);
 
-    e->creat.uid = BPF_CORE_READ(i, i_uid).val;
-    e->creat.gid = BPF_CORE_READ(i, i_gid).val;
-    e->creat.ino = BPF_CORE_READ(i, i_ino);
-    e->creat.perms = BPF_CORE_READ(i, i_mode);
+    e->syscall.creat.uid = BPF_CORE_READ(i, i_uid).val;
+    e->syscall.creat.gid = BPF_CORE_READ(i, i_gid).val;
+    e->syscall.creat.ino = BPF_CORE_READ(i, i_ino);
+    e->syscall.creat.perms = BPF_CORE_READ(i, i_mode);
 
 END:
     bpf_ringbuf_submit(e, 0);
@@ -709,10 +813,10 @@ int trace_exit_mkdir(struct trace_event_raw_sys_exit *ctx)
         return 0;
     }
 
-    bpf_get_path(e->mkdir.pathname, (char *)e->args[0]);
-    e->mkdir.mode = e->args[1];
+    bpf_get_path(e->syscall.mkdir.pathname, (char *)e->syscall.args[0]);
+    e->syscall.mkdir.mode = e->syscall.args[1];
 
-    if (e->ret != 0) {
+    if (e->syscall.ret != 0) {
         goto END;
     }
 
@@ -723,10 +827,10 @@ int trace_exit_mkdir(struct trace_event_raw_sys_exit *ctx)
         goto END;
     }
 
-    e->mkdir.uid   = data->i_uid.val;
-    e->mkdir.gid   = data->i_gid.val;
-    e->mkdir.ino   = data->i_ino;
-    e->mkdir.perms = data->i_mode;
+    e->syscall.mkdir.uid   = data->i_uid.val;
+    e->syscall.mkdir.gid   = data->i_gid.val;
+    e->syscall.mkdir.ino   = data->i_ino;
+    e->syscall.mkdir.perms = data->i_mode;
 
     bpf_map_delete_elem(&mkdir_map, &pid_tgid);
 
@@ -749,11 +853,11 @@ int trace_exit_mkdirat(struct trace_event_raw_sys_exit *ctx)
         return 0;
     }
 
-    e->mkdirat.dfd = e->args[0];
-    bpf_get_path(e->mkdirat.pathname, (char *)e->args[1]);
-    e->mkdirat.mode = e->args[2];
+    e->syscall.mkdirat.dfd = e->syscall.args[0];
+    bpf_get_path(e->syscall.mkdirat.pathname, (char *)e->syscall.args[1]);
+    e->syscall.mkdirat.mode = e->syscall.args[2];
 
-    if (e->ret != 0) {
+    if (e->syscall.ret != 0) {
         goto END;
     }
 
@@ -764,10 +868,10 @@ int trace_exit_mkdirat(struct trace_event_raw_sys_exit *ctx)
         goto END;
     }
 
-    e->mkdirat.uid   = data->i_uid.val;
-    e->mkdirat.gid   = data->i_gid.val;
-    e->mkdirat.ino   = data->i_ino;
-    e->mkdirat.perms = data->i_mode;
+    e->syscall.mkdirat.uid   = data->i_uid.val;
+    e->syscall.mkdirat.gid   = data->i_gid.val;
+    e->syscall.mkdirat.ino   = data->i_ino;
+    e->syscall.mkdirat.perms = data->i_mode;
 
     bpf_map_delete_elem(&mkdir_map, &pid_tgid);
 
@@ -790,7 +894,7 @@ int trace_exit_chdir(struct trace_event_raw_sys_exit *ctx)
         return 0;
     }
 
-    bpf_get_path(e->chdir.dir, (const char *)e->args[0]);
+    bpf_get_path(e->syscall.chdir.dir, (const char *)e->syscall.args[0]);
     bpf_ringbuf_submit(e, 0);
     return 0;
 }
@@ -809,7 +913,7 @@ int trace_exit_fchdir(struct trace_event_raw_sys_exit *ctx)
         return 0;
     }
 
-    e->fchdir.fd = e->args[0];
+    e->syscall.fchdir.fd = e->syscall.args[0];
     bpf_ringbuf_submit(e, 0);
     return 0;
 }
@@ -828,10 +932,10 @@ int trace_exit_chmod(struct trace_event_raw_sys_exit *ctx)
         return 0;
     }
 
-    bpf_get_path(e->chmod.pathname, (char *)e->args[0]);
-    e->chmod.mode = e->args[1];
+    bpf_get_path(e->syscall.chmod.pathname, (char *)e->syscall.args[0]);
+    e->syscall.chmod.mode = e->syscall.args[1];
 
-    if (e->ret < 0) {
+    if (e->syscall.ret < 0) {
         goto END;
     }
 
@@ -842,7 +946,7 @@ int trace_exit_chmod(struct trace_event_raw_sys_exit *ctx)
         goto END;
     }
 
-    e->chmod.perms = data->i_mode;
+    e->syscall.chmod.perms = data->i_mode;
 
     bpf_map_delete_elem(&chmod_data_map, &pid_tgid);
 
@@ -852,7 +956,7 @@ int trace_exit_chmod(struct trace_event_raw_sys_exit *ctx)
         goto END;
     }
 
-    __builtin_memcpy(&e->chmod.evm_hash, evm_data, sizeof(e->chmod.evm_hash));
+    __builtin_memcpy(&e->syscall.chmod.evm_hash, evm_data, sizeof(e->syscall.chmod.evm_hash));
 
     bpf_map_delete_elem(&evm_data_map, &pid_tgid);
 
@@ -877,10 +981,10 @@ int trace_exit_fchmod(struct trace_event_raw_sys_exit *ctx)
         return 0;
     }
 
-    e->fchmod.fd = e->args[0];
-    e->fchmod.mode = e->args[1];
+    e->syscall.fchmod.fd = e->syscall.args[0];
+    e->syscall.fchmod.mode = e->syscall.args[1];
 
-    if (e->ret < 0) {
+    if (e->syscall.ret < 0) {
         goto END;
     }
 
@@ -891,7 +995,7 @@ int trace_exit_fchmod(struct trace_event_raw_sys_exit *ctx)
         goto END;
     }
 
-    e->fchmod.perms = data->i_mode;
+    e->syscall.fchmod.perms = data->i_mode;
     bpf_map_delete_elem(&chmod_data_map, &pid_tgid);
 
         struct ima_data *evm_data;
@@ -900,7 +1004,7 @@ int trace_exit_fchmod(struct trace_event_raw_sys_exit *ctx)
         goto END;
     }
 
-    __builtin_memcpy(&e->fchmod.evm_hash, evm_data, sizeof(e->fchmod.evm_hash));
+    __builtin_memcpy(&e->syscall.fchmod.evm_hash, evm_data, sizeof(e->syscall.fchmod.evm_hash));
 
     bpf_map_delete_elem(&evm_data_map, &pid_tgid);
 
@@ -923,11 +1027,11 @@ int trace_exit_chown(struct trace_event_raw_sys_exit *ctx)
         return 0;
     }
 
-    bpf_get_path(e->chown.pathname, (char *)e->args[0]);
-    e->chown.owner = e->args[1];
-    e->chown.group = e->args[2];
+    bpf_get_path(e->syscall.chown.pathname, (char *)e->syscall.args[0]);
+    e->syscall.chown.owner = e->syscall.args[1];
+    e->syscall.chown.group = e->syscall.args[2];
 
-    if (e->ret < 0) {
+    if (e->syscall.ret < 0) {
         goto END;
     }
 
@@ -938,7 +1042,7 @@ int trace_exit_chown(struct trace_event_raw_sys_exit *ctx)
         goto END;
     }
 
-    e->chown.perms = data->i_mode;
+    e->syscall.chown.perms = data->i_mode;
 
     bpf_map_delete_elem(&chown_data_map, &pid_tgid);
 
@@ -948,7 +1052,7 @@ int trace_exit_chown(struct trace_event_raw_sys_exit *ctx)
         goto END;
     }
 
-    __builtin_memcpy(&e->chown.evm_hash, evm_data, sizeof(e->chown.evm_hash));
+    __builtin_memcpy(&e->syscall.chown.evm_hash, evm_data, sizeof(e->syscall.chown.evm_hash));
 
     bpf_map_delete_elem(&evm_data_map, &pid_tgid);
 
@@ -971,11 +1075,11 @@ int trace_exit_fchown(struct trace_event_raw_sys_exit *ctx)
         return 0;
     }
 
-    e->fchown.fd = e->args[0];
-    e->fchown.owner = e->args[1];
-    e->fchown.group = e->args[2];
+    e->syscall.fchown.fd = e->syscall.args[0];
+    e->syscall.fchown.owner = e->syscall.args[1];
+    e->syscall.fchown.group = e->syscall.args[2];
 
-    if (e->ret < 0) {
+    if (e->syscall.ret < 0) {
         goto END;
     }
 
@@ -986,7 +1090,7 @@ int trace_exit_fchown(struct trace_event_raw_sys_exit *ctx)
         goto END;
     }
 
-    e->fchown.perms = data->i_mode;
+    e->syscall.fchown.perms = data->i_mode;
     bpf_map_delete_elem(&chown_data_map, &pid_tgid);
 
     struct ima_data *evm_data;
@@ -995,7 +1099,7 @@ int trace_exit_fchown(struct trace_event_raw_sys_exit *ctx)
         goto END;
     }
 
-    __builtin_memcpy(&e->fchown.evm_hash, evm_data, sizeof(e->fchown.evm_hash));
+    __builtin_memcpy(&e->syscall.fchown.evm_hash, evm_data, sizeof(e->syscall.fchown.evm_hash));
 
     bpf_map_delete_elem(&evm_data_map, &pid_tgid);
 
@@ -1007,6 +1111,18 @@ END:
 SEC("tracepoint/syscalls/sys_enter_close")
 int trace_enter_close(struct trace_event_raw_sys_enter *ctx)
 {
+    struct syscall_args close_args = {};
+    BPF_CORE_READ_INTO(&close_args.args, ctx, args);
+    struct task_struct *task = (struct task_struct *)bpf_get_current_task();
+    const struct file *file = bpf_get_task_file(task, close_args.args[0]);
+    const struct inode *i = bpf_file_inode(file);
+
+    struct fput_data data = {};
+    data.ino = BPF_CORE_READ(i, i_ino);
+    struct super_block *sb = BPF_CORE_READ(i, i_sb);
+    data.dev = BPF_CORE_READ(sb, s_dev);
+    u64 pid_tgid = bpf_get_current_pid_tgid();
+    bpf_map_update_elem(&fput_data_map, &pid_tgid, &data, BPF_ANY);
     return save_syscall_args(ctx);
 }
 
@@ -1018,32 +1134,18 @@ int trace_exit_close(struct trace_event_raw_sys_exit *ctx)
         return 0;
     }
 
-    e->close.fd = e->args[0];
-    e->close.ima_hash.size = 0;
-    e->close.ima_hash.value[0] = 0;
-
     u64 pid_tgid = bpf_get_current_pid_tgid();
-
-    struct ima_data *ima_data;
-    if (!(ima_data = bpf_map_lookup_elem(&ima_data_map, &pid_tgid))) {
-        bpf_printk("close without saved ima data");
+    struct fput_data *data;
+    if (!(data = bpf_map_lookup_elem(&fput_data_map, &pid_tgid))) {
+        bpf_printk("close without saved data");
         goto END;
+    } else {
+        e->syscall.close.ino = data->ino;
+        e->syscall.close.dev = data->dev;
+        bpf_map_delete_elem(&fput_data_map, &pid_tgid);
     }
-
-    __builtin_memcpy(&e->close.ima_hash, ima_data, sizeof(e->close.ima_hash));
-
-    bpf_map_delete_elem(&ima_data_map, &pid_tgid);
-
-    struct ima_data *evm_data;
-    if (!(evm_data = bpf_map_lookup_elem(&evm_data_map, &pid_tgid))) {
-        bpf_printk("close without saved evm data");
-        goto END;
-    }
-
-    __builtin_memcpy(&e->close.evm_hash, evm_data, sizeof(e->close.evm_hash));
-
-    bpf_map_delete_elem(&evm_data_map, &pid_tgid);
 END:
+    e->syscall.close.fd = e->syscall.args[0];
     bpf_ringbuf_submit(e, 0);
     return 0;
 }
@@ -1062,7 +1164,7 @@ int trace_exit_umask(struct trace_event_raw_sys_exit *ctx)
         return 0;
     }
 
-    e->umask.mask = e->args[0];
+    e->syscall.umask.mask = e->syscall.args[0];
     bpf_ringbuf_submit(e, 0);
     return 0;
 }
@@ -1081,7 +1183,7 @@ int trace_exit_unlink(struct trace_event_raw_sys_exit *ctx)
         return 0;
     }
 
-    bpf_get_path(e->unlink.pathname, (char *)e->args[0]);
+    bpf_get_path(e->syscall.unlink.pathname, (char *)e->syscall.args[0]);
     bpf_ringbuf_submit(e, 0);
     return 0;
 }
@@ -1100,7 +1202,7 @@ int trace_exit_rmdir(struct trace_event_raw_sys_exit *ctx)
         return 0;
     }
 
-    bpf_get_path(e->rmdir.pathname, (char *)e->args[0]);
+    bpf_get_path(e->syscall.rmdir.pathname, (char *)e->syscall.args[0]);
     bpf_ringbuf_submit(e, 0);
     return 0;
 }
@@ -1119,7 +1221,7 @@ int trace_exit_getdents(struct trace_event_raw_sys_exit *ctx)
         return 0;
     }
 
-    e->getdents.fd = e->args[0];
+    e->syscall.getdents.fd = e->syscall.args[0];
     // e->getdents.dirent = e->args[1];
     // e->getdents.count = e->args[2];
     bpf_ringbuf_submit(e, 0);
@@ -1140,8 +1242,8 @@ int trace_exit_link(struct trace_event_raw_sys_exit *ctx)
         return 0;
     }
 
-    bpf_get_path(e->link.oldname, (char *)e->args[0]);
-    bpf_get_path(e->link.newname, (char *)e->args[1]);
+    bpf_get_path(e->syscall.link.oldname, (char *)e->syscall.args[0]);
+    bpf_get_path(e->syscall.link.newname, (char *)e->syscall.args[1]);
     bpf_ringbuf_submit(e, 0);
     return 0;
 }
@@ -1160,8 +1262,8 @@ int trace_exit_symlink(struct trace_event_raw_sys_exit *ctx)
         return 0;
     }
 
-    bpf_get_path(e->symlink.oldname, (char *)e->args[0]);
-    bpf_get_path(e->symlink.newname, (char *)e->args[1]);
+    bpf_get_path(e->syscall.symlink.oldname, (char *)e->syscall.args[0]);
+    bpf_get_path(e->syscall.symlink.newname, (char *)e->syscall.args[1]);
     bpf_ringbuf_submit(e, 0);
     return 0;
 }
@@ -1180,11 +1282,11 @@ int trace_exit_getxattr(struct trace_event_raw_sys_exit *ctx)
         return 0;
     }
 
-    bpf_get_path(e->getxattr.pathname, (char *)e->args[0]);
-    bpf_get_xattr_name(e->getxattr.name, (char *)e->args[1]);
-    e->getxattr.addr = (void *)e->args[2];
-    e->getxattr.size = e->args[3];
-    bpf_get_xattr_value(e->getxattr.value, e->getxattr.size, e->getxattr.addr);
+    bpf_get_path(e->syscall.getxattr.pathname, (char *)e->syscall.args[0]);
+    bpf_get_xattr_name(e->syscall.getxattr.name, (char *)e->syscall.args[1]);
+    e->syscall.getxattr.addr = (void *)e->syscall.args[2];
+    e->syscall.getxattr.size = e->syscall.args[3];
+    bpf_get_xattr_value(e->syscall.getxattr.value, e->syscall.getxattr.size, e->syscall.getxattr.addr);
 
     bpf_ringbuf_submit(e, 0);
     return 0;
@@ -1204,11 +1306,11 @@ int trace_exit_setxattr(struct trace_event_raw_sys_exit *ctx)
         return 0;
     }
 
-    bpf_get_path(e->setxattr.pathname, (char *)e->args[0]);
-    bpf_get_xattr_name(e->setxattr.name, (char *)e->args[1]);
-    e->setxattr.size = e->args[3];
-    e->setxattr.flags = e->args[4];
-    bpf_get_xattr_value(e->setxattr.value, e->setxattr.size, (uint8_t *)e->args[2]);
+    bpf_get_path(e->syscall.setxattr.pathname, (char *)e->syscall.args[0]);
+    bpf_get_xattr_name(e->syscall.setxattr.name, (char *)e->syscall.args[1]);
+    e->syscall.setxattr.size = e->syscall.args[3];
+    e->syscall.setxattr.flags = e->syscall.args[4];
+    bpf_get_xattr_value(e->syscall.setxattr.value, e->syscall.setxattr.size, (uint8_t *)e->syscall.args[2]);
 
     bpf_ringbuf_submit(e, 0);
     return 0;
@@ -1228,8 +1330,8 @@ int trace_exit_execve(struct trace_event_raw_sys_exit *ctx)
         return 0;
     }
 
-    if (e->ret < 0) {
-        bpf_get_path(e->execve.pathname, (char *)e->args[0]);
+    if (e->syscall.ret < 0) {
+        bpf_get_path(e->syscall.execve.pathname, (char *)e->syscall.args[0]);
     } else {
         // get pathname from map
         u64 pid_tgid = bpf_get_current_pid_tgid();
@@ -1237,14 +1339,14 @@ int trace_exit_execve(struct trace_event_raw_sys_exit *ctx)
         if (!(data = bpf_map_lookup_elem(&execve_map, &pid_tgid))) {
             bpf_printk("execve without saved data");
         } else {
-            __builtin_memcpy(e->execve.pathname, data->pathname, sizeof data->pathname);
+            __builtin_memcpy(e->syscall.execve.pathname, data->pathname, sizeof data->pathname);
             bpf_map_delete_elem(&execve_map, &pid_tgid);
         }
     }
     //e->execve.argv = e->args[1];
     //e->execve.envp = e->args[2];
     struct task_struct *task = (struct task_struct *)bpf_get_current_task();
-    e->execve.umask = BPF_CORE_READ(task, fs, umask);
+    e->syscall.execve.umask = BPF_CORE_READ(task, fs, umask);
 
     bpf_ringbuf_submit(e, 0);
     return 0;
@@ -1277,27 +1379,18 @@ int trace_enter_exit(struct trace_event_raw_sys_enter *ctx)
         return 0;
     }
 
-    struct syscall_event *e = bpf_ringbuf_reserve(&events, sizeof *e, 0);
-    if (!e) {
-        bpf_printk("ringbuffer overflow");
+    struct syscall_event *e;
+    if (!(e = read_main_args())) {
         return 0;
     }
 
-    e->ts = bpf_ktime_get_ns();
-
-    u64 pid_tgid = bpf_get_current_pid_tgid();
-    e->pid = pid_tgid & ((1uLL << 32) - 1);
-    e->tgid = pid_tgid >> 32;
-
-    bpf_get_current_comm(&e->comm, sizeof e->comm);
-
-    e->syscall_nr = ctx->id;
+    e->syscall.syscall_nr = ctx->id;
     struct syscall_args args = {};
     BPF_CORE_READ_INTO(&args.args, ctx, args);
-     __builtin_memcpy(e->args, &args.args, sizeof e->args);
+    __builtin_memcpy(e->syscall.args, &args.args, sizeof e->syscall.args);
 
-    e->ret = 0;
-    e->exit.error_code = e->args[0];
+    e->syscall.ret = 0;
+    e->syscall.exit.error_code = e->syscall.args[0];
 
     bpf_ringbuf_submit(e, 0);
     return 0;
@@ -1306,31 +1399,18 @@ int trace_enter_exit(struct trace_event_raw_sys_enter *ctx)
 SEC("tracepoint/syscalls/sys_enter_exit_group")
 int trace_enter_exit_group(struct trace_event_raw_sys_enter *ctx)
 {
-    if (!should_monitor()) {
+    struct syscall_event *e;
+    if (!(e = read_main_args())) {
         return 0;
     }
 
-    struct syscall_event *e = bpf_ringbuf_reserve(&events, sizeof *e, 0);
-    if (!e) {
-        bpf_printk("ringbuffer overflow");
-        return 0;
-    }
-
-    e->ts = bpf_ktime_get_ns();
-
-    u64 pid_tgid = bpf_get_current_pid_tgid();
-    e->pid = pid_tgid & ((1uLL << 32) - 1);
-    e->tgid = pid_tgid >> 32;
-
-    bpf_get_current_comm(&e->comm, sizeof e->comm);
-
-    e->syscall_nr = ctx->id;
+    e->syscall.syscall_nr = ctx->id;
     struct syscall_args args = {};
     BPF_CORE_READ_INTO(&args.args, ctx, args);
-     __builtin_memcpy(e->args, &args.args, sizeof e->args);
+    __builtin_memcpy(e->syscall.args, &args.args, sizeof e->syscall.args);
 
-    e->ret = 0;
-    e->exit_group.error_code = e->args[0];
+    e->syscall.ret = 0;
+    e->syscall.exit_group.error_code = e->syscall.args[0];
 
     bpf_ringbuf_submit(e, 0);
     return 0;
