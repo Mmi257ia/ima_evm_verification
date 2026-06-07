@@ -93,17 +93,19 @@ class SnapshotBuilder:
         groups = [f'getent group {" ".join(self._init_groups)}'] if len(self._init_groups) > 0 else []
 
         files_stat = [f'stat --format=%n,%d,%i,%u,%g,%f {" ".join(self._init_files)}'] if len(self._init_files) > 0 else []
-        files_attrs = [f'getfattr --absolute-names -m - -d -e hex {" ".join(self._init_files)}'] if len(self._init_files) > 0 else []
+        files_xattrs = [f'getfattr --absolute-names -m - -d -e hex {" ".join(self._init_files)}'] if len(self._init_files) > 0 else []
         files_acl = [f'getfacl -n -p -e {" ".join(self._init_files)}'] if len(self._init_files) > 0 else []
+        files_attrs = [f'lsattr {" ".join(self._init_files)}'] if len(self._init_files) > 0 else []
 
         self._init_dirs.sort() # sorting moves parent folder earlier in the list
         dirs_stat = [f'stat --format=%n,%d,%i,%u,%g,%f {" ".join(self._init_dirs)}'] if len(self._init_dirs) > 0 else []
-        dirs_attrs = [f'getfattr --absolute-names -m - -d -e hex {" ".join(self._init_dirs)}'] if len(self._init_dirs) > 0 else []
+        dirs_xattrs = [f'getfattr --absolute-names -m - -d -e hex {" ".join(self._init_dirs)}'] if len(self._init_dirs) > 0 else []
         dirs_acl = [f'getfacl -n -p -e {" ".join(self._init_dirs)}'] if len(self._init_dirs) > 0 else []
+        dirs_attrs = [f'lsattr -d {" ".join(self._init_dirs)}'] if len(self._init_dirs) > 0 else []
 
-        return [root, *groups, *users, *dirs_stat, *dirs_attrs, 'echo "<>"', 
-                    *files_stat, *files_attrs, 'echo "<>"',
-                    *dirs_acl, *files_acl]
+        return [root, *groups, *users, *dirs_stat, *dirs_xattrs, 'echo "<>"', 
+                    *files_stat, *files_xattrs, 'echo "<>"',
+                    *dirs_acl, *files_acl, *dirs_attrs, *files_attrs]
 
     def _xreadline(self, trace: LineStream):
         line = trace.readline()
@@ -137,8 +139,8 @@ class SnapshotBuilder:
         while True:
             if line == '<>':
                 break
-            attrs, line = self._parse_getfattr_output(line, trace)
-            snapshot.folders_xattrs.append(attrs)
+            xattrs, line = self._parse_getfattr_output(line, trace)
+            snapshot.folders_xattrs.append(xattrs)
 
         for path in self._init_files:
             s = self._parse_stat_line(self._xreadline(trace))
@@ -150,11 +152,15 @@ class SnapshotBuilder:
         while True:
             if line == '<>':
                 break
-            attrs, line = self._parse_getfattr_output(line, trace)
-            snapshot.files_xattrs.append(attrs)
+            xattrs, line = self._parse_getfattr_output(line, trace)
+            snapshot.files_xattrs.append(xattrs)
 
         for path in self._init_dirs + self._init_files:
             snapshot.acl.append(self._parse_getfacl_output(trace))
+        
+        for path in self._init_dirs + self._init_files:
+            # FIXME parse immutable attribute
+            self._xreadline(trace)
 
         return snapshot
 
