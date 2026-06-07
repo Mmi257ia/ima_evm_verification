@@ -150,7 +150,7 @@ class LinuxTestSpecImpl(LinuxTestSpec):
             mount_ima_dir = ima_evm_dir is not None
             if mount_ima_dir:
                 ima_evm_host_dir = TemporaryDirectorySudoCleanup()
-                subprocess.run(['sudo', 'chown', 'root', ima_evm_host_dir])
+                subprocess.run(['sudo', 'chown', 'root:root', ima_evm_host_dir])
                 subprocess.run(['sudo', 'chmod', '777', ima_evm_host_dir])
 
             if before_run:
@@ -284,7 +284,7 @@ class LinuxTestSpecImpl(LinuxTestSpec):
             if mount_ima_dir:
                 ima_evm_host_dir = base_path / 'ima_evm_dir'
                 ima_evm_host_dir.mkdir()
-                subprocess.run(['sudo', 'chown', 'root', ima_evm_host_dir])
+                subprocess.run(['sudo', 'chown', 'root:root', ima_evm_host_dir])
                 subprocess.run(['sudo', 'chmod', '777', ima_evm_host_dir])
 
             gatherinfo_commands = self._initialiser.make_text_of_gatherinfo_file() # this make important
