@@ -59,7 +59,7 @@ EVMKEY="/etc/keys/evm-user.blob"
 сохранить  
 дальше:
 ```bash
-vim /etc/sysconfig/ima_policy
+vim /etc/sysconfig/ima-policy
 ```
 содержимое файла:
 ```
