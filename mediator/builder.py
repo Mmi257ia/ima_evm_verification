@@ -31,6 +31,8 @@ from model.events.symlink import symlink
 from model.events.unlink import unlink
 from model.events.switch_ima_mode import switch_ima_mode
 from model.events.switch_evm_mode import switch_evm_mode
+from model.events.mark_immutable import mark_immutable
+from model.events.unmark_immutable import unmark_immutable
 from anis.stages.mediator import ModelTraceConsumer
 from model.machine import Machine
 from mediator.enums import FileFlags, Modes, XattrFlags, IntegrityModes
@@ -510,13 +512,13 @@ class EventsBuilder:
                 skip_coverage=True,)
 
     def mark_immutable(self, file: Inode):
-        self._model_trace.add(switch_evm_mode,
+        self._model_trace.add(mark_immutable,
                 _file=self.translate_inode(file),
                 expected=True,
                 skip_coverage=True,)
 
     def unmark_immutable(self, file: Inode):
-        self._model_trace.add(switch_evm_mode,
+        self._model_trace.add(unmark_immutable,
                 _file=self.translate_inode(file),
                 expected=True,
                 skip_coverage=True,)
