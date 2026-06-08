@@ -12,7 +12,10 @@ from mediator.state import Inode, MediatorState, ProcFD, FileHash, ImaEvmMode
 def calc_fake_meta_hash(uid: int | None, gid: int | None, perms: int | None) -> bytes:
     if any(p is None for p in (uid, gid, perms)):
         return bytes()
-    return f"{uid}_{gid}_{S_IMODE(perms)}".encode()
+    return f"fake_{uid}_{gid}_{S_IMODE(perms)}".encode()
+
+def is_hash_fake(hash: bytes) -> bool:
+    return 'fake' in hash.decode()
 
 
 class TraceTranslator:
@@ -283,9 +286,13 @@ class TraceTranslator:
         file = self.mediator_state.get_ino(abspath)
         filestat = self.mediator_state.do_stat(file)
 
-        # get cached hashes if parameters are not passed 
-        # TODO distinguish when to use old hash and when to use fake hash!!!! (default vs None?)
-        metaHash = metaHash or self.mediator_state.get_real_hashes(file).meta_hash or calc_fake_meta_hash(filestat.st_uid, filestat.st_gid, perms)
+        # get cached or fake hashes if parameters are not passed 
+        if not metaHash:
+            stored_hash = self.mediator_state.get_real_hashes(file).meta_hash
+            if not stored_hash or is_hash_fake(stored_hash):
+                metaHash = calc_fake_meta_hash(filestat.st_uid, filestat.st_gid, perms)
+            else:
+                metaHash = stored_hash
 
         self._model_trace.chmod(pathname, mode, parent, file, perms, pid, metaHash, retval)
 
@@ -300,8 +307,13 @@ class TraceTranslator:
         file = self.mediator_state.get_ino_of_fd(ProcFD(pid, fd))
         filestat = self.mediator_state.do_stat(file)
 
-        # get cached hashes if parameters are not passed
-        metaHash = metaHash or self.mediator_state.get_real_hashes(file).meta_hash or calc_fake_meta_hash(filestat.st_uid, filestat.st_gid, perms)
+        # get cached or fake hashes if parameters are not passed 
+        if not metaHash:
+            stored_hash = self.mediator_state.get_real_hashes(file).meta_hash
+            if not stored_hash or is_hash_fake(stored_hash):
+                metaHash = calc_fake_meta_hash(filestat.st_uid, filestat.st_gid, perms)
+            else:
+                metaHash = stored_hash
 
         # append model trace
         self._model_trace.fchmod(fd, mode, perms, pid, metaHash, retval)
@@ -321,8 +333,13 @@ class TraceTranslator:
         pre_uid = self.mediator_state.do_stat(file).st_uid
         pre_gid = self.mediator_state.do_stat(file).st_gid
         
-        # get cached hashes if parameters are not passed
-        metaHash = metaHash or self.mediator_state.get_real_hashes(file).meta_hash or calc_fake_meta_hash(owner, group, perms)
+        # get cached or fake hashes if parameters are not passed 
+        if not metaHash:
+            stored_hash = self.mediator_state.get_real_hashes(file).meta_hash
+            if not stored_hash or is_hash_fake(stored_hash):
+                metaHash = calc_fake_meta_hash(owner, group, perms)
+            else:
+                metaHash = stored_hash
         
         self._model_trace.chown(pathname, owner, group, pre_uid, pre_gid, parent, file, perms, pid, metaHash, retval)
 
@@ -341,8 +358,13 @@ class TraceTranslator:
         pre_uid = self.mediator_state.do_stat(file).st_uid
         pre_gid = self.mediator_state.do_stat(file).st_gid
 
-        # get cached hashes if parameters are not passed
-        metaHash = metaHash or self.mediator_state.get_real_hashes(file).meta_hash or calc_fake_meta_hash(owner, group, perms)
+        # get cached or fake hashes if parameters are not passed 
+        if not metaHash:
+            stored_hash = self.mediator_state.get_real_hashes(file).meta_hash
+            if not stored_hash or is_hash_fake(stored_hash):
+                metaHash = calc_fake_meta_hash(owner, group, perms)
+            else:
+                metaHash = stored_hash
         
         self._model_trace.fchown(fd, owner, group, pre_uid, pre_gid, perms, pid, metaHash, retval)
 
