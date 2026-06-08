@@ -114,6 +114,9 @@ class LinuxTestSpec(Protocol):
                  mode: int) -> None:
         ...
 
+    def enable_ima_evm(self, flag: bool = True) -> None:
+        ...
+
     def add_setup(self, setup_cmd: str) -> Any:
         ...
 

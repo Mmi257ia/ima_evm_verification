@@ -91,6 +91,9 @@ class LinuxTestSpecImpl(LinuxTestSpec):
         self.add_setup(f'sudo -u {owner} -g {group} mkdir {path}')
         self.add_setup(f'chmod {mode:0o} {path}')
     
+    def enable_ima_evm(self, flag: bool = True):
+        self._initialiser.set_ima_evm_enabled(flag)
+    
     def add_setup(self, setup_cmd: str) -> Any:
         self._setup_commands.append(setup_cmd)
 
@@ -451,8 +454,9 @@ class LinuxTestSpecImpl(LinuxTestSpec):
 
     def _replay_setup(self, snapshot: Snapshot, tt: TraceTranslator):
         
-        tt.set_init_ima_mode(ima_mode='FIX')
-        tt.set_init_evm_mode(evm_mode='FIX')
+        if snapshot.ima_evm_enabled:
+            tt.set_init_ima_mode(ima_mode='FIX')
+            tt.set_init_evm_mode(evm_mode='FIX')
 
         for group in snapshot.groups:
             tt.add_init_group(gid=group.gid)
@@ -481,13 +485,14 @@ class LinuxTestSpecImpl(LinuxTestSpec):
         for path in snapshot.immutable:
             tt.set_init_immutable(path=path)
 
+        if snapshot.ima_evm_enabled:
+            tt.set_init_ima_mode(ima_mode='ENFORCE')
+            tt.set_init_evm_mode(evm_mode='ENFORCE')
+
         check_axioms(self._machine)
 
 
     def _replay_login(self, trace: LineStream, tt: TraceTranslator):
-
-        tt.set_init_ima_mode(ima_mode='ENFORCE')
-        tt.set_init_evm_mode(evm_mode='ENFORCE')
 
         line = trace.readline()
         if not line:

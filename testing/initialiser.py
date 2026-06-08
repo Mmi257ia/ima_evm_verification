@@ -41,6 +41,7 @@ class Snapshot:
     acl: list[tuple[str, list[str]]] = field(default_factory=list[tuple[str, list[str]]])
     hashes: dict[str, tuple[bytes, bytes]] = field(default_factory=dict[str, tuple[bytes, bytes]])
     immutable: list[str] = field(default_factory=list[str])
+    ima_evm_enabled: bool = False
 
 
 class SnapshotBuilder:
@@ -50,6 +51,7 @@ class SnapshotBuilder:
         self._init_groups = list[str]()
         self._init_files = list[str]()
         self._init_dirs = list[str]()
+        self._ima_evm_enabled = False
 
     def add_user(self, user: str) -> None:
         self._init_users.append(user)
@@ -87,6 +89,9 @@ class SnapshotBuilder:
                 break
             if path not in self._init_dirs:
                 self._init_dirs.append(path)
+    
+    def set_ima_evm_enabled(self, flag: bool):
+        self._ima_evm_enabled = flag
 
     def make_text_of_gatherinfo_file(self):
         root = f'stat --format=%n,%d,%i,%u,%g,%f /'
@@ -167,6 +172,8 @@ class SnapshotBuilder:
 
         for xattrs in snapshot.folders_xattrs + snapshot.files_xattrs:
             snapshot.hashes[xattrs.path] = self._extract_hashes(xattrs)
+        
+        snapshot.ima_evm_enabled = self._ima_evm_enabled
 
         return snapshot
 
