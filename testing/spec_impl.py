@@ -35,7 +35,7 @@ class TemporaryDirectorySudoCleanup(tempfile.TemporaryDirectory):
         path = Path(self.name)
         if self._finalizer.detach() or path.exists():
             for f in path.rglob('*'):
-                subprocess.run(['sudo', 'setattr', '-i', f])
+                subprocess.run(['sudo', 'chattr', '-i', f])
             subprocess.run(['sudo', 'rm', '-rf', f])
 
 
