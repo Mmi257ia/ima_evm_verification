@@ -85,8 +85,8 @@ class TraceTranslator:
             self._model_trace.link(oldpath, path, oldParent, file, parent, 0, 0, skip_coverage=True)
         else:
 
-            create_meta =  calc_fake_meta_hash(0, 0, 0o777)
-            chown_meta =  calc_fake_meta_hash(uid, gid, 0o777)
+            create_meta = calc_fake_meta_hash(0, 0, 0o777)
+            chown_meta = calc_fake_meta_hash(uid, gid, 0o777)
             chmod_meta = calc_fake_meta_hash(uid, gid, perms)
             close_meta = meta_hash if content_hash else chmod_meta
 
@@ -172,6 +172,7 @@ class TraceTranslator:
         # append model trace
         abspath = self.mediator_state.normalize(pathname, pid)
         parent = self.mediator_state.get_ino(dirname(abspath))
+        fake_meta_hash = calc_fake_meta_hash(uid, gid, perms)
         if self.mediator_state.do_exists(abspath):
             file = self.mediator_state.get_ino(abspath)
             self._model_trace.open_exists(abspath, flags, parent, file, pid, retval)
@@ -179,7 +180,7 @@ class TraceTranslator:
             if dev is None:
                 dev = parent.dev
             file = Inode(dev, ino) if ino is not None else None
-            self._model_trace.open_create(abspath, flags, mode, parent, file, gid, perms, pid, bytes(), bytes(), retval)
+            self._model_trace.open_create(abspath, flags, mode, parent, file, gid, perms, pid, bytes(), fake_meta_hash, retval)
 
         # update mediator state
         if retval >= 0:
@@ -188,7 +189,7 @@ class TraceTranslator:
             gid = assert_is_not_none(gid)
             perms = assert_is_not_none(perms)
             if not self.mediator_state.do_exists(abspath):
-                self.mediator_state.do_creat(abspath, file, uid, gid, perms, FileHash())    # TODO what to pass into open
+                self.mediator_state.do_creat(abspath, file, uid, gid, perms, FileHash(meta_hash=fake_meta_hash))
             self.mediator_state.do_open(ProcFD(pid, retval), file)
 
     def creat(self, pathname: str, mode: int, pid: int,
@@ -202,7 +203,8 @@ class TraceTranslator:
         if dev is None:
             dev = parent.dev
         file = Inode(dev, ino) if ino is not None else None
-        self._model_trace.creat(abspath, mode, parent, file, gid, perms, pid, bytes(), bytes(), retval)
+        fake_meta_hash = calc_fake_meta_hash(uid, gid, perms)
+        self._model_trace.creat(abspath, mode, parent, file, gid, perms, pid, bytes(), fake_meta_hash, retval)
 
         # update mediator state
         if retval >= 0:
@@ -211,7 +213,7 @@ class TraceTranslator:
             gid = assert_is_not_none(gid)
             perms = assert_is_not_none(perms)
             if not self.mediator_state.do_exists(abspath):
-                self.mediator_state.do_creat(abspath, file, uid, gid, perms, FileHash())    # TODO same
+                self.mediator_state.do_creat(abspath, file, uid, gid, perms, FileHash(meta_hash=fake_meta_hash))
             self.mediator_state.do_open(ProcFD(pid, retval), file)
 
     def openat(self, dfd: int, pathname: str, flags: int, mode: int, pid: int,
@@ -229,6 +231,7 @@ class TraceTranslator:
         cwd = self.mediator_state.get_ino(cwd_path)
         abspath = join(cwd_path, pathname)
         parent = self.mediator_state.get_ino(dirname(abspath))
+        fake_meta_hash = calc_fake_meta_hash(uid, gid, perms)
         if self.mediator_state.do_exists(abspath):
             file = self.mediator_state.get_ino(abspath) # it works if retval < 0 also
             self._model_trace.openat_exists(dfd, pathname, flags, parent, file, cwd, pid, retval)
@@ -236,7 +239,7 @@ class TraceTranslator:
             if dev is None:
                 dev = parent.dev
             file = Inode(dev, ino) if ino is not None else None
-            self._model_trace.openat_create(dfd, pathname, flags, mode, parent, file, gid, perms, cwd, pid, bytes(), bytes(), retval)
+            self._model_trace.openat_create(dfd, pathname, flags, mode, parent, file, gid, perms, cwd, pid, bytes(), fake_meta_hash, retval)
 
         # update mediator state
         if retval >= 0:            
@@ -245,7 +248,7 @@ class TraceTranslator:
             gid = assert_is_not_none(gid)
             perms = assert_is_not_none(perms)
             if not self.mediator_state.do_exists(abspath):
-                self.mediator_state.do_creat(abspath, file, uid, gid, perms, FileHash())    # TODO same
+                self.mediator_state.do_creat(abspath, file, uid, gid, perms, FileHash(meta_hash=fake_meta_hash))
             self.mediator_state.do_open(ProcFD(pid, retval), file)
 
     def mkdir(self, pathname: str, mode: int, pid: int,
