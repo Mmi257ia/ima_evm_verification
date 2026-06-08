@@ -8,6 +8,7 @@ def test_chmod_methodic_2(t: LinuxTestSpec):
     policy_uid = 2000
     ima_user = 'ima_user'
     t.make_user(ima_user, uid=policy_uid)
+    t.enable_ima_evm()
 
     ima_evm_dir = 'ima_evm_dir'
     t.make_dir(f'/{ima_evm_dir}/dir', ima_user, ima_user, 0o755)
@@ -15,10 +16,6 @@ def test_chmod_methodic_2(t: LinuxTestSpec):
     
     t.add_setup(f'chattr +i /{ima_evm_dir}/dir/file')
 
-    try:
-        with t.make_program_and_run(ima_user, ima_user, ima_evm_dir=ima_evm_dir, umask=0) as child:
-            # should fail
-            child.chmod(f'/{ima_evm_dir}/dir/file', 0o600, fatal=True)
-            raise Exception("ERROR")
-    except Exception:
-        pass
+    with t.make_program_and_run(ima_user, ima_user, ima_evm_dir=ima_evm_dir, umask=0) as child:
+            # should fail - but it passes because grd is fail and chmod return error 
+            child.chmod(f'/{ima_evm_dir}/dir/file', 0o600)

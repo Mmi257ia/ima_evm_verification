@@ -3,6 +3,7 @@ from tests.spec import LinuxTestSpec
 def test_setxattr_methodic_1(t: LinuxTestSpec):
     ima_user = 'ima_user'
     t.make_user(ima_user, uid=2000)
+    t.enable_ima_evm()
 
     ima_evm_dir = 'ima_evm_dir'
     t.make_dir(f'/{ima_evm_dir}/dir', ima_user, ima_user, 0o755)

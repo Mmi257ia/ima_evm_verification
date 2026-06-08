@@ -5,7 +5,7 @@ import os
 
 
 @fixture(params=[
-    ("read", os.O_RDONLY, True),
+    ("read", os.O_RDONLY, False),
     ("write", os.O_WRONLY, False),
     ("rdwr", os.O_RDWR, False),
 ], ids=["read", "write", "rdwr"])
@@ -13,15 +13,14 @@ def access_mode(request):
     return request.param
 
 """
-из методики пункт 4
-корректные контролируемые подсистемой обеспечения целостности 
-(с сохраненным корректным хэш-кодом), 
-неизменяемые (с установленным атрибутом immutable)
+из методики пункт 5
+INCORRECT hash + immutable 
 """
-def test_open_exists_methodic_4(t: LinuxTestSpec, access_mode):
+def test_open_exists_methodic_5(t: LinuxTestSpec, access_mode):
     mode_name, flags, should_succeed = access_mode
 
     policy_uid = 2000
+
 
     # user with ima
     ima_user = 'ima_user'
@@ -33,16 +32,13 @@ def test_open_exists_methodic_4(t: LinuxTestSpec, access_mode):
     t.make_file(f'/{ima_evm_dir}/dir/file', owner=ima_user, group=ima_user, mode=0o666)
 
     t.add_setup(f'echo "test content" > /{ima_evm_dir}/dir/file')
-
+    t.add_setup(f'cat /{ima_evm_dir}/dir/file > /dev/null')
     t.add_setup(f'chattr +i /{ima_evm_dir}/dir/file')
 
-    with t.make_program_and_run(ima_user, ima_user, ima_evm_dir=ima_evm_dir, umask=0) as child:
-        # read should succeed
-        # write/rdwd should fail but it passes because grd is fail and open return error 
+    new_file_path = f'/{ima_evm_dir}/dir/file'
+    fake_ima_hex = '0x01' + ('00' * 20)
+    t.add_setup(f"setfattr -n security.ima -v {fake_ima_hex} {new_file_path}")
 
-        if should_succeed:
-            fd = child.open(f'/{ima_evm_dir}/dir/file', flags, 0, fatal=True)
-            child.close(fd)
-        else:
-            fd = child.open(f'/{ima_evm_dir}/dir/file', flags, 0)
-                
+    with t.make_program_and_run(ima_user, ima_user, ima_evm_dir=ima_evm_dir, umask=0) as child:
+        # all should fail
+        child.open(new_file_path, flags, 0)

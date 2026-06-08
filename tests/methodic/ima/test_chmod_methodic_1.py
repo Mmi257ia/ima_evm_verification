@@ -8,6 +8,7 @@ def test_chmod_methodic_1(t: LinuxTestSpec):
     policy_uid = 2000
     ima_user = 'ima_user'
     t.make_user(ima_user, uid=policy_uid)
+    t.enable_ima_evm()
 
     ima_evm_dir = 'ima_evm_dir'
     t.make_dir(f'/{ima_evm_dir}/dir', ima_user, ima_user, 0o755)
