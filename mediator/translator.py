@@ -61,6 +61,7 @@ class TraceTranslator:
         self._model_trace.chmod(path, perms, parent, folder, perms, 0, chmod_meta, 0, skip_coverage=True)
 
         self.mediator_state.do_set_integrity_hashes(folder, FileHash(bytes(), chmod_meta))
+        self._model_trace.force_set_ima_evm_hash(folder, bytes(), chmod_meta)
 
 
     def set_xattrs_init_file(self, *, path: str, xattrs: dict[str, str]):

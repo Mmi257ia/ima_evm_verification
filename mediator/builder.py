@@ -1,5 +1,6 @@
 from collections import defaultdict
 from functools import reduce
+import inspect
 import os
 from os.path import basename
 from stat import S_IMODE
@@ -33,6 +34,7 @@ from model.events.switch_ima_mode import switch_ima_mode
 from model.events.switch_evm_mode import switch_evm_mode
 from model.events.mark_immutable import mark_immutable
 from model.events.unmark_immutable import unmark_immutable
+from model.events.any_transition import any_transition
 from anis.stages.mediator import ModelTraceConsumer
 from model.machine import Machine
 from mediator.enums import FileFlags, Modes, XattrFlags, IntegrityModes
@@ -520,5 +522,30 @@ class EventsBuilder:
     def unmark_immutable(self, file: Inode):
         self._model_trace.add(unmark_immutable,
                 _file=self.translate_inode(file),
+                expected=True,
+                skip_coverage=True,)
+
+    def force_set_ima_evm_hash(self, file: Inode, ima_hash: bytes, evm_hash: bytes):
+
+        # translate concrete -> abstract
+        _file = self.translate_inode(file)
+        _ima_hash = self.translate_hash(ima_hash)
+        _evm_hash = self.translate_hash(evm_hash)
+
+        # get machine state and convert it into event args
+        required_params = inspect.signature(any_transition).parameters.keys()
+        machine_state = {f"_f{k}": v for k,v in vars(self._machine).items() if f"_f{k}" in required_params}
+ 
+        # update mappings
+        d = dict(self._machine.IMAHash)
+        d[_file] = _ima_hash
+        machine_state['_fIMAHash'] = frozenset(d.items())
+
+        d = dict(self._machine.EVMHash)
+        d[_file] = _evm_hash
+        machine_state['_fEVMHash'] = frozenset(d.items())
+        
+        self._model_trace.add(any_transition,
+                **machine_state,
                 expected=True,
                 skip_coverage=True,)
