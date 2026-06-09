@@ -165,12 +165,13 @@ static const char *syscall_names[500] = {
 };
 #undef sys_entry
 
+char ima_hash_hex[IMA_EVM_HASH_HEX_LEN];
+char evm_hash_hex[IMA_EVM_HASH_HEX_LEN];
+
 static int handle_event(void *ctx, void *data, size_t len)
 {
 	struct event *e = data;
-	char ima_hash_hex[129];
 	ima_hash_hex[0] = '\0';
-	char evm_hash_hex[129];
 	evm_hash_hex[0] = '\0';
 
 	if (e->type == FPUT_EVENT) {

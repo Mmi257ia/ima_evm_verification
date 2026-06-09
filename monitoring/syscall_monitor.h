@@ -10,6 +10,8 @@
 #define TASK_COMM_LEN 16
 #endif
 
+#define IMA_EVM_HASH_HEX_LEN 133
+
 #define XATTR_SECURITY_PREFIX "security."
 
 #define XATTR_EVM_SUFFIX "evm"
@@ -18,7 +20,7 @@
 #define XATTR_IMA_SUFFIX "ima"
 #define XATTR_NAME_IMA XATTR_SECURITY_PREFIX XATTR_IMA_SUFFIX
 
-struct ima_data {
+struct ima_evm_data {
 	__u64 size;
 	__u8 value[2 + HASH_MAX_DIGESTSIZE];
 };
@@ -98,27 +100,27 @@ struct event {
 					char pathname[PATH_SIZE];
 					__u32 mode;
 					__u32 perms;
-					struct ima_data evm_hash;
+					struct ima_evm_data evm_hash;
 				} chmod;
 				struct {
 					int fd;
 					__u32 mode;
 					__u32 perms;
-					struct ima_data evm_hash;
+					struct ima_evm_data evm_hash;
 				} fchmod;
 				struct {
 					char pathname[PATH_SIZE];
 					__u32 owner;
 					__u32 group;
 					__u32 perms;
-					struct ima_data evm_hash;
+					struct ima_evm_data evm_hash;
 				} chown;
 				struct {
 					int fd;
 					__u32 owner;
 					__u32 group;
 					__u32 perms;
-					struct ima_data evm_hash;
+					struct ima_evm_data evm_hash;
 				} fchown;
 				struct {
 					unsigned int fd;
@@ -146,8 +148,6 @@ struct event {
 				struct {
 					char oldname[PATH_SIZE];
 					char newname[PATH_SIZE];
-					struct ima_data ima_hash;
-					struct ima_data evm_hash;
 				} symlink;
 				struct getxattr {
 					char pathname[PATH_SIZE];
@@ -182,8 +182,8 @@ struct event {
 		struct fput_event {
 			unsigned ino;
 			unsigned dev;
-			struct ima_data ima_hash;
-			struct ima_data evm_hash;
+			struct ima_evm_data ima_hash;
+			struct ima_evm_data evm_hash;
 		} fput;
 	};
 } __attribute__((packed));

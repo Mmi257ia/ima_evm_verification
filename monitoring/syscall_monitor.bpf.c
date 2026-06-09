@@ -109,7 +109,7 @@ struct {
 	__uint(type, BPF_MAP_TYPE_HASH);
 	__uint(max_entries, 10240);
 	__type(key, u64);
-	__type(value, struct ima_data);
+	__type(value, struct ima_evm_data);
 } ima_data_map SEC(".maps");
 
 struct evm_ctx {
@@ -128,7 +128,7 @@ struct {
 	__uint(type, BPF_MAP_TYPE_HASH);
 	__uint(max_entries, 10240);
 	__type(key, u64);
-	__type(value, struct ima_data);
+	__type(value, struct ima_evm_data);
 } evm_data_map SEC(".maps");
 
 struct chown_ctx {
@@ -225,7 +225,7 @@ int BPF_KRETPROBE(handle_evm_calc_hmac_or_hash_ret)
 	struct evm_digest *evm_digest_ptr = ictx->digest_ptr;
 	struct ima_digest_data hdr = BPF_CORE_READ(evm_digest_ptr, hdr);
 
-	struct ima_data data = {};
+	struct ima_evm_data data = {};
 	data.size = BPF_CORE_READ(&hdr, length);
 
 	__u32 offset = offsetof(struct evm_digest, digest);
@@ -242,7 +242,7 @@ int BPF_KRETPROBE(handle_evm_calc_hmac_or_hash_ret)
 	data.size += 1;
 
 #if 0
-     char hex_str[128] = {};
+     char hex_str[IMA_EVM_HASH_HEX_LEN] = {};
      int pos = 0;
      for (int i = 0; i < data.size && pos < sizeof(hex_str)-3; i++) {
          unsigned char byte = data.value[i];
@@ -342,7 +342,7 @@ int BPF_KRETPROBE(handle___fput_ret)
 	e->fput.evm_hash.size = 0;
 	e->fput.evm_hash.value[0] = 0;
 
-	struct ima_data *ima_data, *evm_data;
+	struct ima_evm_data *ima_data, *evm_data;
 	if (!(ima_data = bpf_map_lookup_elem(&ima_data_map, &pid_tgid))) {
 		bpf_printk("fput without saved ima data");
 		goto END_IMA;
@@ -398,15 +398,10 @@ int BPF_KRETPROBE(handle_ima_update_xattr_ret)
 		return 0;
 	}
 
-	long ret = PT_REGS_RC(ctx);
-	if (ret < 0) {
-		goto CLEANUP;
-	}
-
 	struct integrity_iint_cache *iint_cache = ictx->iint_cache;
 	struct ima_digest_data *ima_hash = BPF_CORE_READ(iint_cache, ima_hash);
 
-	struct ima_data data = {};
+	struct ima_evm_data data = {};
 	data.size = BPF_CORE_READ(ima_hash, length);
 
 	__u32 offset = offsetof(struct ima_digest_data, digest);
@@ -425,7 +420,7 @@ int BPF_KRETPROBE(handle_ima_update_xattr_ret)
 	bpf_probe_read_kernel(&data.value, 2, data_ptr);
 	data.size += 2;
 #if 0
-     char hex_str[128] = {};
+     char hex_str[IMA_EVM_HASH_HEX_LEN] = {};
      int pos = 0;
      for (int i = 0; i < data.size && pos < sizeof(hex_str)-3; i++) {
          unsigned char byte = data.value[i];
@@ -931,7 +926,7 @@ int trace_exit_chmod(struct trace_event_raw_sys_exit *ctx)
 
 	u64 pid_tgid = bpf_get_current_pid_tgid();
 
-	struct ima_data *evm_data;
+	struct ima_evm_data *evm_data;
 	struct chmod_data *data;
 	if (!(evm_data = bpf_map_lookup_elem(&evm_data_map, &pid_tgid))) {
 		bpf_printk("chmod without saved evm data");
@@ -980,7 +975,7 @@ int trace_exit_fchmod(struct trace_event_raw_sys_exit *ctx)
 
 	u64 pid_tgid = bpf_get_current_pid_tgid();
 
-	struct ima_data *evm_data;
+	struct ima_evm_data *evm_data;
 	struct chmod_data *data;
 	if (!(evm_data = bpf_map_lookup_elem(&evm_data_map, &pid_tgid))) {
 		bpf_printk("chmod without saved evm data");
@@ -1026,7 +1021,7 @@ int trace_exit_chown(struct trace_event_raw_sys_exit *ctx)
 		goto END;
 	}
 
-	struct ima_data *evm_data;
+	struct ima_evm_data *evm_data;
 	struct chown_data *data;
 	u64 pid_tgid = bpf_get_current_pid_tgid();
 
@@ -1077,7 +1072,7 @@ int trace_exit_fchown(struct trace_event_raw_sys_exit *ctx)
 
 	u64 pid_tgid = bpf_get_current_pid_tgid();
 
-	struct ima_data *evm_data;
+	struct ima_evm_data *evm_data;
 	struct chown_data *data;
 	if (!(evm_data = bpf_map_lookup_elem(&evm_data_map, &pid_tgid))) {
 		bpf_printk("chown without saved evm data");
