@@ -15,7 +15,7 @@ def calc_fake_meta_hash(uid: int | None, gid: int | None, perms: int | None) -> 
     return f"fake_{uid}_{gid}_{S_IMODE(perms)}".encode()
 
 def is_hash_fake(hash: bytes) -> bool:
-    return 'fake' in hash.decode()
+    return hash[:4] == 'fake'.encode()
 
 
 class TraceTranslator:
