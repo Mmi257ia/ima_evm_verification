@@ -338,7 +338,7 @@ class TraceTranslator:
         if not metaHash:
             stored_hash = self.mediator_state.get_real_hashes(file).meta_hash
             if not stored_hash or is_hash_fake(stored_hash):
-                metaHash = calc_fake_meta_hash(owner, group, perms)
+                metaHash = calc_fake_meta_hash(owner if owner != -1 else pre_uid, group if group != -1 else pre_gid, perms)
             else:
                 metaHash = stored_hash
         
@@ -363,7 +363,7 @@ class TraceTranslator:
         if not metaHash:
             stored_hash = self.mediator_state.get_real_hashes(file).meta_hash
             if not stored_hash or is_hash_fake(stored_hash):
-                metaHash = calc_fake_meta_hash(owner, group, perms)
+                metaHash = calc_fake_meta_hash(owner if owner != -1 else pre_uid, group if group != -1 else pre_gid, perms)
             else:
                 metaHash = stored_hash
         
