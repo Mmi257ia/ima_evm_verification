@@ -311,14 +311,8 @@ static int handle_event(void *ctx, void *data, size_t len)
 		       e->syscall.link.oldname, e->syscall.link.newname);
 		break;
 	case SYS_symlink:
-		hex_encode(e->syscall.symlink.ima_hash.value,
-			   e->syscall.symlink.ima_hash.size, ima_hash_hex);
-		hex_encode(e->syscall.symlink.evm_hash.value,
-			   e->syscall.symlink.evm_hash.size, evm_hash_hex);
-		printf("\"oldname\": \"%s\", \"newname\": \"%s\", \"contentHash\": \"%s\", \"contentHashLen\": %llu, \"metaHash\": \"%s\", \"metaHashLen\": %llu,",
-		       e->syscall.symlink.oldname, e->syscall.symlink.newname,
-		       ima_hash_hex, e->syscall.symlink.ima_hash.size,
-		       evm_hash_hex, e->syscall.symlink.evm_hash.size);
+		printf("\"oldname\": \"%s\", \"newname\": \"%s\", ",
+		       e->syscall.symlink.oldname, e->syscall.symlink.newname);
 		break;
 	case SYS_getxattr: {
 		char *decoded_value;
