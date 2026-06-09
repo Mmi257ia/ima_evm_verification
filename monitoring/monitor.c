@@ -167,7 +167,7 @@ static const char *syscall_names[500] = {
 
 static int handle_event(void *ctx, void *data, size_t len)
 {
-    struct syscall_event *e = data;
+    struct event *e = data;
     char ima_hash_hex[129];
     ima_hash_hex[0] = '\0';
     char evm_hash_hex[129];

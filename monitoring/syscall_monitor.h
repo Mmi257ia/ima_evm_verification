@@ -29,7 +29,7 @@ enum events_type {
     FPUT_EVENT
 };
 
-struct syscall_event {
+struct event {
     __u64 ts;
     __u64 event_start_time;
 
@@ -41,7 +41,7 @@ struct syscall_event {
     __u32 egid;
 
     union {
-        struct syscall_event_small {
+        struct syscall_event {
             __u32 syscall_nr;
             __s64 ret;
             /* Copy of userspace registers. */
@@ -183,7 +183,7 @@ struct syscall_event {
                 } exit;
             };
         } syscall;
-        struct {
+        struct fput_event {
             unsigned ino;
             unsigned dev;
             struct ima_data ima_hash;
