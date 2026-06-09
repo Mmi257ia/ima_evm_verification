@@ -54,6 +54,10 @@ class LinuxTestSpecImpl(LinuxTestSpec):
         # by all users which is needed for IMA/EVM to appraise
         # new files created by users affected by its policy
         self._setup_commands.append('chmod a+w /')
+        # For IMA/EVM tests, files should be created via sudo.
+        # It breaks some DAC tests, so there we want to preserve
+        # the old touch+chown behaviour.
+        self.make_files_via_sudo = False
 
     def make_user(self,
                   user: str,
@@ -76,7 +80,11 @@ class LinuxTestSpecImpl(LinuxTestSpec):
         if not isabs(path):
             raise ValueError('Relative paths are not supported')
         self._initialiser.add_file(path)
-        self.add_setup(f'sudo -u {owner} -g {group} touch {path}')
+        if self.make_files_via_sudo:
+            self.add_setup(f'sudo -u {owner} -g {group} touch {path}')
+        else:
+            self.add_setup(f'touch {path}')
+            self.add_setup(f'chown {owner}:{group} {path}')
         self.add_setup(f'chmod {mode:0o} {path}')
         
 
@@ -88,11 +96,16 @@ class LinuxTestSpecImpl(LinuxTestSpec):
         if not isabs(path):
             raise ValueError('Relative paths are not supported')
         self._initialiser.add_dir(path)
-        self.add_setup(f'sudo -u {owner} -g {group} mkdir {path}')
+        if self.make_files_via_sudo:
+            self.add_setup(f'sudo -u {owner} -g {group} mkdir {path}')
+        else:
+            self.add_setup(f'mkdir {path}')
+            self.add_setup(f'chown {owner}:{group} {path}')
         self.add_setup(f'chmod {mode:0o} {path}')
     
     def enable_ima_evm(self, flag: bool = True):
         self._initialiser.set_ima_evm_enabled(flag)
+        self.make_files_via_sudo = True
     
     def add_setup(self, setup_cmd: str) -> Any:
         self._setup_commands.append(setup_cmd)
