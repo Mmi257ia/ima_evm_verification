@@ -26,8 +26,6 @@ class TraceTranslator:
         self._model_trace = EventsBuilder(model_trace=model_trace, m=m,
                                           root_dev=root_dev, root_ino=root_ino,
                                           root_uid=root_uid, root_gid=root_gid)
-        # TODO need to pass concrete root and exe hashes somehow all the way down into Data Translator
-        # to match them with model constants
 
         self.mediator_state = MediatorState(Inode(root_dev, root_ino))
 
@@ -434,10 +432,8 @@ class TraceTranslator:
             self.mediator_state.do_link(absoldpath, absnewpath)
 
     def symlink(self, target: str, linkpath: str, pid: int,
-                dev: Optional[int], ino: Optional[int], contentHash: bytes, metaHash: bytes, retval: int):
+                dev: Optional[int], ino: Optional[int], retval: int):
         
-        # TODO optional hashes
-
         # append model trace
         abstarget = self.mediator_state.normalize(target, pid)
         target_parent = self.mediator_state.get_ino(dirname(abstarget))
@@ -446,7 +442,7 @@ class TraceTranslator:
         if dev is None:
             dev = parent.dev
         file = Inode(dev, ino) if ino is not None else None
-        self._model_trace.symlink(target, linkpath, target_parent, parent, file, pid, contentHash, metaHash, retval)
+        self._model_trace.symlink(target, linkpath, target_parent, parent, file, pid, bytes(), bytes(), retval)
 
         # update mediator state
         # symlink is partially supported by model

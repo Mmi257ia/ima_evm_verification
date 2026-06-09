@@ -63,7 +63,7 @@ class MediatorState:
             del self.stats[ino]
 
         self.do_set_real_hashes(ino, hashes)
-        if self.evm_mode is ImaEvmMode.FIX and self.ima_mode is ImaEvmMode.FIX and hashes:     # TODO when different
+        if self.evm_mode is ImaEvmMode.FIX and self.ima_mode is ImaEvmMode.FIX and hashes:
             self.do_set_integrity_hashes(ino, hashes)
 
     def do_exit(self, proc: int):
@@ -71,7 +71,7 @@ class MediatorState:
         for fd in fds:
             ino = self.get_ino_of_fd(fd)
             hashes = self.get_real_hashes(ino)
-            self.do_close(fd, hashes)       # TODO exit has no info about new hashes, but its okay ig?
+            self.do_close(fd, hashes)
     
     def do_creat(self, path: str, file: Inode, uid: int, gid: int, perms: int, hashes: FileHash):
         if not isabs(path):
@@ -145,7 +145,7 @@ class MediatorState:
         return self.intergity_hashes.get(file, FileHash())  # returns default if no ima/evm strings are stored
 
     def get_real_hashes(self, file: Inode) -> FileHash:
-        return self.real_hashes.get(file, FileHash())  # returns default if no content/meta hashes are stored TODO 
+        return self.real_hashes.get(file, FileHash())  # returns default if no content/meta hashes are stored
     
     def do_set_integrity_hashes(self, file: Inode, hashes: FileHash):
         self.intergity_hashes[file] = hashes

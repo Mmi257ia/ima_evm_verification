@@ -63,12 +63,6 @@ class DataTranslator:
         self.rootInode = Inode(root_dev, root_ino)
         self.model_files[self.rootInode] = m.ROOT
 
-        # TODO get root and exe hashes here??
-        self.model_hashes[...] = m.ROOT_CONTENT_HASH
-        self.model_hashes[...] = m.ROOT_META_HASH
-        self.model_hashes[...] = m.INIT_EXE_CONTENT_HASH
-        self.model_hashes[...] = m.INIT_EXE_META_HASH
-
 
 class EventsBuilder:
     def __init__(self, *, model_trace: ModelTraceConsumer, m: Machine,
