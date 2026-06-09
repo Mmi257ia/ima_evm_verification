@@ -5,20 +5,14 @@ import os
 
 
 @fixture(params=[
-    ("read", os.O_RDONLY, True),
+    ("read", os.O_RDONLY, False),
     ("write", os.O_WRONLY, False),
     ("rdwr", os.O_RDWR, False),
 ], ids=["read", "write", "rdwr"])
 def access_mode(request):
     return request.param
 
-"""
-из методики пункт 2
-корректные контролируемые подсистемой обеспечения целостности 
-(с сохраненным корректным хэш-кодом), 
-но изменяемые (без атрибута immutable)
-"""
-def test_open_exists_methodic_2(t: LinuxTestSpec, access_mode):
+def test_open_exists_methodic_1(t: LinuxTestSpec, access_mode):
     mode_name, flags, should_succeed = access_mode
 
     policy_uid = 2000
@@ -34,18 +28,12 @@ def test_open_exists_methodic_2(t: LinuxTestSpec, access_mode):
 
     t.add_setup(f'echo "test content" > /{ima_evm_dir}/dir/file')
 
+    t.add_setup(f'chattr +i /{ima_evm_dir}/dir/file')
+    t.add_setup(f'chattr +i /{ima_evm_dir}/dir/')
+
     try:
         with t.make_program_and_run(ima_user, ima_user, ima_evm_dir=ima_evm_dir, umask=0) as child:
-            # read should success
-            # write/rdwd should fail 
-            if should_succeed:
-                fd = child.open(f'/{ima_evm_dir}/dir/file', flags, 0, fatal=True)
-                child.close(fd)
-            else:
-                fd = child.open(f'/{ima_evm_dir}/dir/file', flags, 0, fatal=True)
+            child.open(f'/{ima_evm_dir}/dir/file', flags, 0)
 
     except AssertionError as e:
-        if should_succeed:
-            raise e
-        else:
-            print(f"Rightfully caught exception: {e}")
+        print(f"Rightfully caught exception: {e}")

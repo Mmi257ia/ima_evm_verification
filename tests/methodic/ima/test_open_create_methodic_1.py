@@ -4,7 +4,7 @@ from tests.spec import LinuxTestSpec
 import pytest
 
 @fixture(params=[
-    ("create", O_WRONLY | O_CREAT),
+    ("create", O_CREAT),
 ], ids=["create"])
 def access_mode(request):
     return request.param

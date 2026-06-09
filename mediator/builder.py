@@ -505,25 +505,25 @@ class EventsBuilder:
         self._model_trace.add(switch_ima_mode,
                 _mode=self._IntegrityModes[mode],
                 expected=True,
-                skip_coverage=True,)
+                skip_coverage=False,)
 
     def switch_evm_mode(self, mode: ImaEvmMode):
         self._model_trace.add(switch_evm_mode,
                 _mode=self._IntegrityModes[mode],
                 expected=True,
-                skip_coverage=True,)
+                skip_coverage=False,)
 
     def mark_immutable(self, file: Inode):
         self._model_trace.add(mark_immutable,
                 _file=self.translate_inode(file),
                 expected=True,
-                skip_coverage=True,)
+                skip_coverage=False,)
 
     def unmark_immutable(self, file: Inode):
         self._model_trace.add(unmark_immutable,
                 _file=self.translate_inode(file),
                 expected=True,
-                skip_coverage=True,)
+                skip_coverage=False,)
 
     def force_set_ima_evm_hash(self, file: Inode, ima_hash: bytes, evm_hash: bytes):
 
