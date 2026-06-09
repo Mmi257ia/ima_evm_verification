@@ -255,7 +255,8 @@ int BPF_KRETPROBE(handle_evm_calc_hmac_or_hash_ret) {
         return 0;
     }
 
-    long ret = PT_REGS_RC(ctx);
+    int ret = (int) PT_REGS_RC(ctx);
+    bpf_printk("EVM HMAC CALC RET (%d)\n", ret);
     if (ret < 0) {
         goto CLEANUP;
     }
@@ -437,11 +438,6 @@ int BPF_KRETPROBE(handle_ima_update_xattr_ret) {
         return 0;
     }
 
-    long ret = PT_REGS_RC(ctx);
-    if (ret < 0) {
-        goto CLEANUP;
-    }
-
     struct integrity_iint_cache *iint_cache = ictx->iint_cache;
     struct ima_digest_data *ima_hash = BPF_CORE_READ(iint_cache, ima_hash);
     
@@ -513,7 +509,7 @@ int BPF_KRETPROBE(handle_chmod_common_ret)
         return 0;
     }
 
-    long ret = PT_REGS_RC(ctx);
+    int ret = (int) PT_REGS_RC(ctx);
     if (ret < 0) {
         goto CLEANUP;
     }
@@ -568,7 +564,7 @@ int BPF_KRETPROBE(handle_chown_common_ret)
         return 0;
     }
 
-    long ret = PT_REGS_RC(ctx);
+    int ret = (int) PT_REGS_RC(ctx);
     if (ret < 0) {
         goto CLEANUP;
     }
