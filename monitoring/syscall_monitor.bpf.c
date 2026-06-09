@@ -5,6 +5,7 @@
 #include "syscall_monitor.h"
 #include "utils.h"
 
+#define SYS_execve 59
 
 char LICENSE[] SEC("license") = "GPL";
 
@@ -21,15 +22,15 @@ struct {
 } events SEC(".maps");
 
 struct {
-    __uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
-    __uint(max_entries, 1);
-    __type(key, u32);
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(max_entries, 8192);
+    __type(key, u64);
     __type(value, struct syscall_args);
 } args_map SEC(".maps");
 
 struct syscall_args {
-    __u64 time;
     __u64 args[6];
+    __u64 time;
 };
 
 struct newdir_data {
@@ -200,7 +201,7 @@ static __always_inline int should_monitor(void)
 // {
 //     if (!should_monitor()) {
 //         return 0;
-//     }    
+//     }
 
 //     char name_buf[32];
 //     const char *name_ptr = (const char *)PT_REGS_PARM3(ctx);
@@ -213,7 +214,7 @@ static __always_inline int should_monitor(void)
 //     data.size = (__u64) PT_REGS_PARM5(ctx);
 //     const void *value_ptr = (const void *) PT_REGS_PARM4(ctx);
 //     bpf_probe_read_kernel(&data.value, sizeof(data.value), value_ptr);
-    
+
 //     bpf_map_update_elem(&ima_data_map, &id, &data, BPF_ANY);
 //     bpf_printk("kprobe/__vfs_setxattr_noperm: %llu", id);
 
@@ -263,14 +264,14 @@ int BPF_KRETPROBE(handle_evm_calc_hmac_or_hash_ret) {
 
     struct evm_digest *evm_digest_ptr = ictx->digest_ptr;
     struct ima_digest_data hdr = BPF_CORE_READ(evm_digest_ptr, hdr);
-    
+
     struct ima_data data = {};
     data.size = BPF_CORE_READ(&hdr, length);
     //const void *value_ptr = (const void *)BPF_CORE_READ(ima_hash, digest);
 
     __u32 offset = offsetof(struct evm_digest, digest);
     const void *value_ptr = (const void *)((__u64)evm_digest_ptr + offset);
-    
+
     if (data.size > HASH_MAX_DIGESTSIZE) {
         bpf_printk("evm_calc_hmac_or_hash_ret: digest size (%llu) "
             "is more that the maximum one (%d)", data.size, HASH_MAX_DIGESTSIZE);
@@ -280,7 +281,7 @@ int BPF_KRETPROBE(handle_evm_calc_hmac_or_hash_ret) {
     data.value[0] = ictx->type;
     data.size += 1;
 
-    // char hex_str[128] = {}; 
+    // char hex_str[128] = {};
     // int pos = 0;
     // for (int i = 0; i < data.size && pos < sizeof(hex_str)-3; i++) {
     //     unsigned char byte = data.value[i];
@@ -440,7 +441,7 @@ int BPF_KRETPROBE(handle_ima_update_xattr_ret) {
 
     struct integrity_iint_cache *iint_cache = ictx->iint_cache;
     struct ima_digest_data *ima_hash = BPF_CORE_READ(iint_cache, ima_hash);
-    
+
     struct ima_data data = {};
     data.size = BPF_CORE_READ(ima_hash, length);
     //const void *value_ptr = (const void *)BPF_CORE_READ(ima_hash, digest);
@@ -450,7 +451,7 @@ int BPF_KRETPROBE(handle_ima_update_xattr_ret) {
 
     const void *value_ptr = (const void *)((__u64)ima_hash + offset);
     const void *data_ptr = (const void *)((__u64)ima_hash + offset_xattr);
-    
+
     if (data.size > HASH_MAX_DIGESTSIZE) {
         bpf_printk("ima_collesct_measurement_ret: digest size (%llu) "
             "is more that the maximum one (%d)", data.size, HASH_MAX_DIGESTSIZE);
@@ -459,7 +460,7 @@ int BPF_KRETPROBE(handle_ima_update_xattr_ret) {
     bpf_probe_read_kernel(&data.value[2], (__u32)data.size, value_ptr);
     bpf_probe_read_kernel(&data.value, 2, data_ptr);
     data.size += 2;
-    // char hex_str[128] = {}; 
+    // char hex_str[128] = {};
     // int pos = 0;
     // for (int i = 0; i < data.size && pos < sizeof(hex_str)-3; i++) {
     //     unsigned char byte = data.value[i];
@@ -482,14 +483,13 @@ int BPF_KPROBE(handle_chmod_common)
 {
     if (!should_monitor()) {
         return 0;
-    }    
+    }
 
     u64 id = bpf_get_current_pid_tgid();
 
     struct chmod_ctx data = {};
     data.path = (struct path *)PT_REGS_PARM1(ctx);
     bpf_map_update_elem(&chmod_map, &id, &data, BPF_ANY);
-    bpf_printk("kprobe/chmod_common: %llu", id);
 
     return 0;
 }
@@ -595,14 +595,14 @@ save_syscall_args(struct trace_event_raw_sys_enter *ctx)
         return 0;
     }
 
-    u32 key = 0;
+    u64 pid_tgid = bpf_get_current_pid_tgid();
 
     struct syscall_args args = {};
     BPF_CORE_READ_INTO(&args.args, ctx, args);
     args.time = bpf_ktime_get_ns();
 
     long ret;
-    if ((ret = bpf_map_update_elem(&args_map, &key, &args, BPF_ANY)) < 0) {
+    if ((ret = bpf_map_update_elem(&args_map, &pid_tgid, &args, BPF_ANY)) < 0) {
         bpf_printk("update elem returns %ld", ret);
     }
 
@@ -617,14 +617,17 @@ read_syscall_args(struct trace_event_raw_sys_exit *ctx)
         return 0;
     }
 
-    u32 key = 0;
+    u64 pid_tgid = bpf_get_current_pid_tgid();
 
     struct syscall_args *args;
-    if (!(args = bpf_map_lookup_elem(&args_map, &key))) {
-        bpf_printk("lookup failed");
-        return 0;
+    unsigned long zero_args[6];
+    if (!(args = bpf_map_lookup_elem(&args_map, &pid_tgid))) {
+        if (ctx->id != SYS_execve) {
+               bpf_printk("lookup failed for non execve");
+           }
+           // first execve is called without sys_enter (i.e. without save_syscall_args)
     }
-    bpf_map_delete_elem(&args_map, &key);
+   bpf_map_delete_elem(&args_map, &pid_tgid);
 
     struct syscall_event *e = read_main_args();
     if (!e) {
@@ -632,12 +635,19 @@ read_syscall_args(struct trace_event_raw_sys_exit *ctx)
     }
 
     e->type = SYSCALL_EVENT;
-    
-    e->syscall.syscall_nr = ctx->id;
-    __builtin_memcpy(e->syscall.args, args->args, sizeof e->syscall.args);
 
-    e->syscall.ret = ctx->ret;
-    e->event_start_time = args->time;
+    e->syscall.syscall_nr = ctx->id;
+
+	e->syscall.ret = ctx->ret;
+	if (args) {
+    		__builtin_memcpy(e->syscall.args, args->args,
+    				 sizeof e->syscall.args);
+    		e->event_start_time = args->time;
+    	} else {
+    		__builtin_memcpy(e->syscall.args, &zero_args,
+    				 sizeof e->syscall.args);
+    		e->event_start_time = 0;
+    	}
 
     return e;
 }
@@ -1357,8 +1367,8 @@ int trace_exit_execve(struct trace_event_raw_sys_exit *ctx)
             bpf_map_delete_elem(&execve_map, &pid_tgid);
         }
     }
-    //e->execve.argv = e->args[1];
-    //e->execve.envp = e->args[2];
+    //e->execve.argv = e->args[1]; // unknown for login
+    //e->execve.envp = e->args[2]; // unknown for login
     struct task_struct *task = (struct task_struct *)bpf_get_current_task();
     e->syscall.execve.umask = BPF_CORE_READ(task, fs, umask);
 
@@ -1385,7 +1395,7 @@ int trace_sched_process_exec(struct trace_event_raw_sched_process_exec *ctx)
 
     return 0;
 }
- 
+
 SEC("tracepoint/syscalls/sys_enter_exit")
 int trace_enter_exit(struct trace_event_raw_sys_enter *ctx)
 {

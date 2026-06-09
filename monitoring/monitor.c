@@ -12,6 +12,7 @@
 #include <sys/wait.h>
 #include <sys/syscall.h>
 #include <sys/stat.h>
+#include <linux/perf_event.h>
 
 #define PIN_PATH "/sys/fs/bpf/anis"
 #define MAPS_PATH PIN_PATH "/maps"
@@ -182,53 +183,58 @@ static int handle_event(void *ctx, void *data, size_t len)
             e->fput.ino, old_encode_dev(e->fput.dev), ima_hash_hex, e->fput.ima_hash.size, evm_hash_hex, e->fput.evm_hash.size);
         return 0;
     }
-    
+
     printf("{ \"syscall\": \"%s\", \"proc\": \"%s\", \"pid\": %d, \"euid\": %d, \"egid\": %d, \"time\": %llu ,",
         syscall_names[e->syscall.syscall_nr], e->comm,
         e->pid, e->euid, e->egid, e->event_start_time);
 
     switch (e->syscall.syscall_nr) {
     case SYS_open: printf(
-            "\"pathname\": \"%s\", \"flags\": %d, \"mode\": %d, "
-            "\"uid\": %u, \"gid\": %u, "
-            "\"ino\": %u, \"perms\": %u, ",
+            "\"pathname\": \"%s\", \"flags\": %d, \"mode\": %d, ",
             e->syscall.open.pathname, e->syscall.open.flags,
-            e->syscall.open.mode, e->syscall.open.uid,
-            e->syscall.open.gid, e->syscall.open.ino,
-            e->syscall.open.perms);
+            e->syscall.open.mode);
+            if (e->syscall.ret >= 0) printf(
+                "\"uid\": %u, \"gid\": %u, "
+                "\"ino\": %u, \"perms\": %u, ",
+                e->syscall.open.uid, e->syscall.open.gid,
+                e->syscall.open.ino, e->syscall.open.perms);
         break;
     case SYS_openat: printf(
-            "\"dfd\": %d, \"pathname\": \"%s\", \"flags\": %d, "
-            "\"mode\": %d, \"uid\": %u, \"gid\": %u, "
-            "\"ino\": %u, \"perms\": %u, ",
+            "\"dfd\": %d, \"pathname\": \"%s\", \"flags\": %d, \"mode\": %d, ",
             e->syscall.openat.dfd, e->syscall.openat.pathname,
-            e->syscall.openat.flags, e->syscall.openat.mode,
-            e->syscall.openat.uid, e->syscall.openat.gid,
-            e->syscall.openat.ino, e->syscall.openat.perms);
+            e->syscall.openat.flags, e->syscall.openat.mode);
+            if (e->syscall.ret >= 0) printf(
+                "\"uid\": %u, \"gid\": %u, "
+                "\"ino\": %u, \"perms\": %u, ",
+                e->syscall.openat.uid, e->syscall.openat.gid,
+                e->syscall.openat.ino, e->syscall.openat.perms);
         break;
     case SYS_creat: printf(
-            "\"pathname\": \"%s\", \"mode\": %d, "
-            "\"uid\": %u, \"gid\": %u, "
-            "\"ino\": %u, \"perms\": %u, ",
-            e->syscall.creat.pathname, e->syscall.creat.mode,
-            e->syscall.creat.uid, e->syscall.creat.gid,
-            e->syscall.creat.ino, e->syscall.creat.perms);
+            "\"pathname\": \"%s\", \"mode\": %d, ",
+            e->syscall.creat.pathname, e->syscall.creat.mode);
+            if (e->syscall.ret >= 0) printf(
+                "\"uid\": %u, \"gid\": %u, "
+                "\"ino\": %u, \"perms\": %u, ",
+                e->syscall.creat.uid, e->syscall.creat.gid,
+                e->syscall.creat.ino, e->syscall.creat.perms);
         break;
-    case SYS_mkdir: printf("\"pathname\": \"%s\", \"mode\": %d, "
+    case SYS_mkdir: printf(
+            "\"pathname\": \"%s\", \"mode\": %d, ",
+            e->syscall.mkdir.pathname, e->syscall.mkdir.mode);
+    if (e->syscall.ret == 0) printf(
             "\"uid\": %u, \"gid\": %u, "
             "\"ino\": %u, \"perms\": %u, ",
-            e->syscall.mkdir.pathname, e->syscall.mkdir.mode,
             e->syscall.mkdir.uid, e->syscall.mkdir.gid,
             e->syscall.mkdir.ino, e->syscall.mkdir.perms);
         break;
     case SYS_mkdirat: printf(
-            "\"dfd\": %d, \"pathname\": \"%s\", \"mode\": %d, "
-            "\"uid\": %u, \"gid\": %u, "
-            "\"ino\": %u, \"perms\": %u, ",
-            e->syscall.mkdirat.dfd, e->syscall.mkdirat.pathname,
-            e->syscall.mkdirat.mode, e->syscall.mkdirat.uid,
-            e->syscall.mkdirat.gid, e->syscall.mkdirat.ino,
-            e->syscall.mkdirat.perms);
+            "\"dfd\": %d, \"pathname\": \"%s\", \"mode\": %d, ",
+            e->syscall.mkdirat.dfd, e->syscall.mkdirat.pathname, e->syscall.mkdirat.mode);
+            if (e->syscall.ret == 0) printf(
+                "\"uid\": %u, \"gid\": %u, "
+                "\"ino\": %u, \"perms\": %u, ",
+                e->syscall.mkdirat.uid, e->syscall.mkdirat.gid,
+                e->syscall.mkdirat.ino, e->syscall.mkdirat.perms);
         break;
     case SYS_chdir: printf(
             "\"dir\": \"%s\", ",
@@ -238,36 +244,44 @@ static int handle_event(void *ctx, void *data, size_t len)
             "\"fd\": %d, ",
             e->syscall.fchdir.fd);
         break;
-    case SYS_chmod: 
+    case SYS_chmod:
         hex_encode(e->syscall.chmod.evm_hash.value, e->syscall.chmod.evm_hash.size, evm_hash_hex);
         printf(
-            "\"pathname\": \"%s\", \"mode\": %d, \"perms\": %u, \"metaHash\": \"%s\", \"metaHashLen\": \"%llu\",",
-            e->syscall.chmod.pathname, e->syscall.chmod.mode,
+            "\"pathname\": \"%s\", \"mode\": %d, ",
+            e->syscall.chmod.pathname, e->syscall.chmod.mode);
+        if (e->syscall.ret == 0) printf(
+            "\"perms\": %u, \"metaHash\": \"%s\", \"metaHashLen\": %llu,",
             e->syscall.chmod.perms, evm_hash_hex, e->syscall.chmod.evm_hash.size);
         break;
-    case SYS_fchmod: 
+    case SYS_fchmod:
         hex_encode(e->syscall.fchmod.evm_hash.value, e->syscall.fchmod.evm_hash.size, evm_hash_hex);
         printf(
-            "\"fd\": %d, \"mode\": %d, \"perms\": %u, \"metaHash\": \"%s\", \"metaHashLen\": \"%llu\", ",
-            e->syscall.fchmod.fd, e->syscall.fchmod.mode,
+            "\"fd\": %d, \"mode\": %d, ",
+            e->syscall.fchmod.fd, e->syscall.fchmod.mode);
+        if (e->syscall.ret == 0) printf(
+            "\"perms\": %u, \"metaHash\": \"%s\", \"metaHashLen\": %llu, ",
             e->syscall.fchmod.perms, evm_hash_hex, e->syscall.fchmod.evm_hash.size);
         break;
-    case SYS_chown: 
+    case SYS_chown:
         hex_encode(e->syscall.chown.evm_hash.value, e->syscall.chown.evm_hash.size, evm_hash_hex);
         printf(
-            "\"pathname\": \"%s\", \"owner\": %d, \"group\": %d, \"perms\": %u, \"metaHash\": \"%s\", \"metaHashLen\": \"%llu\",",
-            e->syscall.chown.pathname, e->syscall.chown.owner,
-            e->syscall.chown.group, e->syscall.chown.perms, evm_hash_hex, e->syscall.chown.evm_hash.size);
+            "\"pathname\": \"%s\", \"owner\": %d, \"group\": %d, ",
+            e->syscall.chown.pathname, e->syscall.chown.owner, e->syscall.chown.group);
+        if (e->syscall.ret == 0) printf(
+            "\"perms\": %u, \"metaHash\": \"%s\", \"metaHashLen\": %llu,",
+            e->syscall.chown.perms, evm_hash_hex, e->syscall.chown.evm_hash.size);
         break;
-    case SYS_fchown: 
+    case SYS_fchown:
         hex_encode(e->syscall.fchown.evm_hash.value, e->syscall.fchown.evm_hash.size, evm_hash_hex);
         printf(
-            "\"fd\": \"%d\", \"owner\": %d, \"group\": %d, \"perms\": %u, \"metaHash\": \"%s\", \"metaHashLen\": \"%llu\",",
+            "\"fd\": \"%d\", \"owner\": %d, \"group\": %d, ",
             e->syscall.fchown.fd, e->syscall.fchown.owner,
-            e->syscall.fchown.group, e->syscall.fchown.perms, evm_hash_hex, e->syscall.fchown.evm_hash.size);
+            e->syscall.fchown.group);
+        if (e->syscall.ret == 0) printf(
+            "\"perms\": %u, \"metaHash\": \"%s\", \"metaHashLen\": %llu,",
+            e->syscall.fchown.perms, evm_hash_hex, e->syscall.fchown.evm_hash.size);
         break;
-    case SYS_close: 
-        printf(
+    case SYS_close: printf(
             "\"fd\": %u, \"ino\": %u, \"dev\": %u,",
             e->syscall.close.fd, e->syscall.close.ino, old_encode_dev(e->syscall.close.dev));
         break;
@@ -287,22 +301,22 @@ static int handle_event(void *ctx, void *data, size_t len)
             "\"fd\": %u,",
             e->syscall.getdents.fd);
         break;
-    case SYS_symlink: 
-        hex_encode(e->syscall.symlink.ima_hash.value, e->syscall.symlink.ima_hash.size, ima_hash_hex);
-        hex_encode(e->syscall.symlink.evm_hash.value, e->syscall.symlink.evm_hash.size, evm_hash_hex);
-        printf(
-            "\"oldname\": \"%s\", \"newname\": \"%s\", \"contentHash\": \"%s\", \"contentHashLen\": \"%llu\", \"metaHash\": \"%s\", \"metaHashLen\": \"%llu\",",
-            e->syscall.symlink.oldname, e->syscall.symlink.newname, ima_hash_hex, e->syscall.symlink.ima_hash.size, evm_hash_hex, e->syscall.symlink.evm_hash.size);
-        break;
     case SYS_link: printf(
             "\"oldname\": \"%s\", \"newname\": \"%s\",",
             e->syscall.link.oldname, e->syscall.link.newname);
+        break;
+    case SYS_symlink:
+        hex_encode(e->syscall.symlink.ima_hash.value, e->syscall.symlink.ima_hash.size, ima_hash_hex);
+        hex_encode(e->syscall.symlink.evm_hash.value, e->syscall.symlink.evm_hash.size, evm_hash_hex);
+        printf(
+            "\"oldname\": \"%s\", \"newname\": \"%s\", \"contentHash\": \"%s\", \"contentHashLen\": %llu, \"metaHash\": \"%s\", \"metaHashLen\": %llu,",
+            e->syscall.symlink.oldname, e->syscall.symlink.newname, ima_hash_hex, e->syscall.symlink.ima_hash.size, evm_hash_hex, e->syscall.symlink.evm_hash.size);
         break;
     case SYS_getxattr: {
         char *decoded_value;
         __u8 *raw_value = e->syscall.getxattr.value;
         __u64 raw_size = e->syscall.getxattr.size;
-        ssize_t size = e->syscall.ret;        
+        ssize_t size = e->syscall.ret;
         if (raw_size <= 0 || size <= 0) {
             decoded_value = ""; // getxattr fails
         } else if (is_string(raw_value, size + 1)) {
@@ -398,13 +412,16 @@ load(void)
         fprintf(stderr, "Failed to mkdir " MAPS_PATH "; error %d\n", err);
         goto END;
     }
-    if ((err = bpf_map__pin(skel->maps.events, MAPS_PATH "/events")) != 0) {
-        fprintf(stderr, "Failed to pin map 'events'; error %d\n", err);
-        goto END;
+    if ((err = bpf_object__pin_maps(skel->obj, MAPS_PATH)) != 0) {
+        fprintf(stderr, "Failed to pin maps; error %d\n", err);
     }
 
-    if ((err = bpf_map__pin(skel->maps.config_map, MAPS_PATH "/config_map")) != 0) {
-        fprintf(stderr, "Failed to pin map 'config_map'; error %d\n", err);
+    if ((err = mkdir(PROGS_PATH, 0700)) != 0) {
+        fprintf(stderr, "Failed to mkdir " PROGS_PATH "; error %d\n", err);
+        goto END;
+    }
+    if ((err = bpf_object__pin_programs(skel->obj, PROGS_PATH)) != 0) {
+        fprintf(stderr, "Failed to pin programs; error %d\n", err);
         goto END;
     }
 
@@ -420,15 +437,6 @@ load(void)
     cfg.filter_tst = 1;
     bpf_map_update_elem(cfg_fd, &key, &cfg, BPF_ANY);
 
-
-    if ((err = mkdir(PROGS_PATH, 0700)) != 0) {
-        fprintf(stderr, "Failed to mkdir " PROGS_PATH "; error %d\n", err);
-        goto END;
-    }
-    if ((err = bpf_object__pin_programs(skel->obj, PROGS_PATH)) != 0) {
-        fprintf(stderr, "Failed to pin programs; error %d\n", err);
-        goto END;
-    }
     if ((err = syscall_monitor_bpf__attach(skel)) != 0) { // attach all links
         fprintf(stderr, "Failed to attach links; error %d\n", err);
         goto END;
@@ -452,6 +460,7 @@ load(void)
             goto END;
         }
     }
+
 END:
     syscall_monitor_bpf__destroy(skel);
     if (err != 0) {
@@ -459,6 +468,7 @@ END:
     }
     return (err == 0 ? 0 : 1);
 }
+
 
 int
 unload(void)
@@ -473,18 +483,8 @@ run(int argc, char *argv[])
     struct ring_buffer *rb = 0;
     int err = 0;
 
-    int cfg_fd;
-    if ((cfg_fd = bpf_obj_get(MAPS_PATH "/config_map")) < 0) {
-        fprintf(stderr, "Failed to open the pinned map 'config_map'; error %d\n", err);
-        return 1;
-    }
-    struct monitor_config cfg = {0};
-    __u32 key = 0;
-    cfg.enabled = 1;
-    cfg.filter_tst = 1;
-    bpf_map_update_elem(cfg_fd, &key, &cfg, BPF_ANY);
-
     int events_fd;
+    int cfg_fd = -1;
     if ((events_fd = bpf_obj_get(MAPS_PATH "/events")) < 0) {
         fprintf(stderr, "Failed to open the pinned map 'events'; error %d\n", events_fd);
         err = events_fd;
@@ -497,7 +497,19 @@ run(int argc, char *argv[])
         goto END;
     }
 
+    if ((cfg_fd = bpf_obj_get(MAPS_PATH "/config_map")) < 0) {
+        fprintf(stderr, "Failed to open the pinned map 'config_map'; error %d\n", err);
+        err = 1;
+        goto END;
+    }
+    struct monitor_config cfg = {0};
+    __u32 key = 0;
+    cfg.enabled = 1;
+    cfg.filter_tst = 1;
+    bpf_map_update_elem(cfg_fd, &key, &cfg, BPF_ANY);
+
     signal(SIGINT, set_exited);
+
 
     pid_t child = 0;
     if ((err = child = fork()) < 0) {
@@ -529,8 +541,10 @@ run(int argc, char *argv[])
 END:
     if (rb) ring_buffer__free(rb);
 
-    cfg.enabled = 0;
-    bpf_map_update_elem(cfg_fd, &key, &cfg, BPF_ANY);
+    if (cfg_fd != -1) {
+        cfg.enabled = 0;
+        bpf_map_update_elem(cfg_fd, &key, &cfg, BPF_ANY);
+    }
 
     return err == 0 ? 0 : 1;
 }
