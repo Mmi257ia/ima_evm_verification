@@ -164,18 +164,6 @@ struct {
     __type(value, struct execve_data);
 } execve_map SEC(".maps");
 
-
-// static __always_inline int
-// bpf_memcmp(const void *a, const void *b, size_t len) {
-//     const unsigned char *pa = (const unsigned char *)a;
-//     const unsigned char *pb = (const unsigned char *)b;
-//     for (size_t i = 0; i < len; i++) {
-//         if (pa[i] != pb[i])
-//             return (int)pa[i] - (int)pb[i];
-//     }
-//     return 0;
-// }
-
 static __always_inline int should_monitor(void)
 {
     u32 key = 0;
@@ -193,34 +181,6 @@ static __always_inline int should_monitor(void)
     char prefix[4] = "tst_";
     return *(u32 *)prefix == comm[0]; // comm starts with "tst_"
 }
-
-//TODO: maybe we should track calculation hash instead set hash
-
-// SEC("kprobe/__vfs_setxattr_noperm")
-// int BPF_KPROBE(handle_vfs_setxattr_noperm)
-// {
-//     if (!should_monitor()) {
-//         return 0;
-//     }
-
-//     char name_buf[32];
-//     const char *name_ptr = (const char *)PT_REGS_PARM3(ctx);
-//     bpf_probe_read_kernel_str(name_buf, sizeof(name_buf), name_ptr);
-//     if (bpf_memcmp(name_buf, XATTR_NAME_IMA, sizeof(XATTR_NAME_IMA)) != 0)
-//         return 0;
-//     u64 id = bpf_get_current_pid_tgid();
-
-//     struct ima_data data = {};
-//     data.size = (__u64) PT_REGS_PARM5(ctx);
-//     const void *value_ptr = (const void *) PT_REGS_PARM4(ctx);
-//     bpf_probe_read_kernel(&data.value, sizeof(data.value), value_ptr);
-
-//     bpf_map_update_elem(&ima_data_map, &id, &data, BPF_ANY);
-//     bpf_printk("kprobe/__vfs_setxattr_noperm: %llu", id);
-
-//     return 0;
-// }
-
 
 SEC("kprobe/evm_calc_hmac_or_hash")
 int BPF_KPROBE(handle_evm_calc_hmac_or_hash)
@@ -267,7 +227,6 @@ int BPF_KRETPROBE(handle_evm_calc_hmac_or_hash_ret) {
 
     struct ima_data data = {};
     data.size = BPF_CORE_READ(&hdr, length);
-    //const void *value_ptr = (const void *)BPF_CORE_READ(ima_hash, digest);
 
     __u32 offset = offsetof(struct evm_digest, digest);
     const void *value_ptr = (const void *)((__u64)evm_digest_ptr + offset);
@@ -281,15 +240,17 @@ int BPF_KRETPROBE(handle_evm_calc_hmac_or_hash_ret) {
     data.value[0] = ictx->type;
     data.size += 1;
 
-    // char hex_str[128] = {};
-    // int pos = 0;
-    // for (int i = 0; i < data.size && pos < sizeof(hex_str)-3; i++) {
-    //     unsigned char byte = data.value[i];
-    //     hex_str[pos++] = "0123456789abcdef"[byte >> 4];
-    //     hex_str[pos++] = "0123456789abcdef"[byte & 0x0F];
-    // }
-    // hex_str[pos] = '\0';
-    // bpf_printk("EVM HMAC (%d): %s\n", data.size, hex_str);
+#if 0
+     char hex_str[128] = {};
+     int pos = 0;
+     for (int i = 0; i < data.size && pos < sizeof(hex_str)-3; i++) {
+         unsigned char byte = data.value[i];
+         hex_str[pos++] = "0123456789abcdef"[byte >> 4];
+         hex_str[pos++] = "0123456789abcdef"[byte & 0x0F];
+     }
+     hex_str[pos] = '\0';
+     bpf_printk("EVM HMAC (%d): %s\n", data.size, hex_str);
+#endif
 
     bpf_map_update_elem(&evm_data_map, &id, &data, BPF_ANY);
 
@@ -299,14 +260,14 @@ CLEANUP:
 }
 
 static __always_inline
-struct syscall_event *
+struct event *
 read_main_args()
 {
     if (!should_monitor()) {
         return 0;
     }
 
-    struct syscall_event *e = bpf_ringbuf_reserve(&events, sizeof *e, 0);
+    struct event *e = bpf_ringbuf_reserve(&events, sizeof *e, 0);
     if (!e) {
         bpf_printk("ringbuffer overflow");
         return 0;
@@ -368,7 +329,7 @@ int BPF_KRETPROBE(handle___fput_ret) {
         bpf_printk("__fput without saved data");
         return 0;
     }
-    struct syscall_event *e;
+    struct event *e;
     if (!(e = read_main_args())) {
         return 0;
     }
@@ -444,7 +405,6 @@ int BPF_KRETPROBE(handle_ima_update_xattr_ret) {
 
     struct ima_data data = {};
     data.size = BPF_CORE_READ(ima_hash, length);
-    //const void *value_ptr = (const void *)BPF_CORE_READ(ima_hash, digest);
 
     __u32 offset = offsetof(struct ima_digest_data, digest);
     __u32 offset_xattr = offsetof(struct ima_digest_data, xattr);
@@ -460,15 +420,17 @@ int BPF_KRETPROBE(handle_ima_update_xattr_ret) {
     bpf_probe_read_kernel(&data.value[2], (__u32)data.size, value_ptr);
     bpf_probe_read_kernel(&data.value, 2, data_ptr);
     data.size += 2;
-    // char hex_str[128] = {};
-    // int pos = 0;
-    // for (int i = 0; i < data.size && pos < sizeof(hex_str)-3; i++) {
-    //     unsigned char byte = data.value[i];
-    //     hex_str[pos++] = "0123456789abcdef"[byte >> 4];
-    //     hex_str[pos++] = "0123456789abcdef"[byte & 0x0F];
-    // }
-    // hex_str[pos] = '\0';
-    // bpf_printk("IMA (%d): %s\n", data.size, hex_str);
+#if 0
+     char hex_str[128] = {};
+     int pos = 0;
+     for (int i = 0; i < data.size && pos < sizeof(hex_str)-3; i++) {
+         unsigned char byte = data.value[i];
+         hex_str[pos++] = "0123456789abcdef"[byte >> 4];
+         hex_str[pos++] = "0123456789abcdef"[byte & 0x0F];
+     }
+     hex_str[pos] = '\0';
+     bpf_printk("IMA (%d): %s\n", data.size, hex_str);
+#endif
 
 
     bpf_map_update_elem(&ima_data_map, &id, &data, BPF_ANY);
@@ -610,7 +572,7 @@ save_syscall_args(struct trace_event_raw_sys_enter *ctx)
 }
 
 static __always_inline
-struct syscall_event *
+struct event *
 read_syscall_args(struct trace_event_raw_sys_exit *ctx)
 {
     if (!should_monitor()) {
@@ -629,7 +591,7 @@ read_syscall_args(struct trace_event_raw_sys_exit *ctx)
     }
    bpf_map_delete_elem(&args_map, &pid_tgid);
 
-    struct syscall_event *e = read_main_args();
+    struct event *e = read_main_args();
     if (!e) {
         return 0;
     }
@@ -661,7 +623,7 @@ int trace_enter_open(struct trace_event_raw_sys_enter *ctx)
 SEC("tracepoint/syscalls/sys_exit_open")
 int trace_exit_open(struct trace_event_raw_sys_exit *ctx)
 {
-    struct syscall_event *e;
+    struct event *e;
     if (!(e = read_syscall_args(ctx))) {
         return 0;
     }
@@ -697,7 +659,7 @@ int trace_enter_openat(struct trace_event_raw_sys_enter *ctx)
 SEC("tracepoint/syscalls/sys_exit_openat")
 int trace_exit_openat(struct trace_event_raw_sys_exit *ctx)
 {
-    struct syscall_event *e;
+    struct event *e;
     if (!(e = read_syscall_args(ctx))) {
         return 0;
     }
@@ -734,7 +696,7 @@ int trace_enter_creat(struct trace_event_raw_sys_enter *ctx)
 SEC("tracepoint/syscalls/sys_exit_creat")
 int trace_exit_creat(struct trace_event_raw_sys_exit *ctx)
 {
-    struct syscall_event *e;
+    struct event *e;
     if (!(e = read_syscall_args(ctx))) {
         return 0;
     }
@@ -833,7 +795,7 @@ int BPF_KRETPROBE(handle_vfs_mkdir_ret)
 SEC("tracepoint/syscalls/sys_exit_mkdir")
 int trace_exit_mkdir(struct trace_event_raw_sys_exit *ctx)
 {
-    struct syscall_event *e;
+    struct event *e;
     if (!(e = read_syscall_args(ctx))) {
         return 0;
     }
@@ -873,7 +835,7 @@ int trace_enter_mkdirat(struct trace_event_raw_sys_enter *ctx)
 SEC("tracepoint/syscalls/sys_exit_mkdirat")
 int trace_exit_mkdirat(struct trace_event_raw_sys_exit *ctx)
 {
-    struct syscall_event *e;
+    struct event *e;
     if (!(e = read_syscall_args(ctx))) {
         return 0;
     }
@@ -914,7 +876,7 @@ int trace_enter_chdir(struct trace_event_raw_sys_enter *ctx)
 SEC("tracepoint/syscalls/sys_exit_chdir")
 int trace_exit_chdir(struct trace_event_raw_sys_exit *ctx)
 {
-    struct syscall_event *e;
+    struct event *e;
     if (!(e = read_syscall_args(ctx))) {
         return 0;
     }
@@ -933,7 +895,7 @@ int trace_enter_fchdir(struct trace_event_raw_sys_enter *ctx)
 SEC("tracepoint/syscalls/sys_exit_fchdir")
 int trace_exit_fchdir(struct trace_event_raw_sys_exit *ctx)
 {
-    struct syscall_event *e;
+    struct event *e;
     if (!(e = read_syscall_args(ctx))) {
         return 0;
     }
@@ -952,7 +914,7 @@ int trace_enter_chmod(struct trace_event_raw_sys_enter *ctx)
 SEC("tracepoint/syscalls/sys_exit_chmod")
 int trace_exit_chmod(struct trace_event_raw_sys_exit *ctx)
 {
-    struct syscall_event *e;
+    struct event *e;
     if (!(e = read_syscall_args(ctx))) {
         return 0;
     }
@@ -1000,7 +962,7 @@ int trace_enter_fchmod(struct trace_event_raw_sys_enter *ctx)
 SEC("tracepoint/syscalls/sys_exit_fchmod")
 int trace_exit_fchmod(struct trace_event_raw_sys_exit *ctx)
 {
-    struct syscall_event *e;
+    struct event *e;
     if (!(e = read_syscall_args(ctx))) {
         return 0;
     }
@@ -1046,7 +1008,7 @@ int trace_enter_chown(struct trace_event_raw_sys_enter *ctx)
 SEC("tracepoint/syscalls/sys_exit_chown")
 int trace_exit_chown(struct trace_event_raw_sys_exit *ctx)
 {
-    struct syscall_event *e;
+    struct event *e;
     if (!(e = read_syscall_args(ctx))) {
         return 0;
     }
@@ -1094,7 +1056,7 @@ int trace_enter_fchown(struct trace_event_raw_sys_enter *ctx)
 SEC("tracepoint/syscalls/sys_exit_fchown")
 int trace_exit_fchown(struct trace_event_raw_sys_exit *ctx)
 {
-    struct syscall_event *e;
+    struct event *e;
     if (!(e = read_syscall_args(ctx))) {
         return 0;
     }
@@ -1153,7 +1115,7 @@ int trace_enter_close(struct trace_event_raw_sys_enter *ctx)
 SEC("tracepoint/syscalls/sys_exit_close")
 int trace_exit_close(struct trace_event_raw_sys_exit *ctx)
 {
-    struct syscall_event *e;
+    struct event *e;
     if (!(e = read_syscall_args(ctx))) {
         return 0;
     }
@@ -1183,7 +1145,7 @@ int trace_enter_umask(struct trace_event_raw_sys_enter *ctx)
 SEC("tracepoint/syscalls/sys_exit_umask")
 int trace_exit_umask(struct trace_event_raw_sys_exit *ctx)
 {
-    struct syscall_event *e;
+    struct event *e;
     if (!(e = read_syscall_args(ctx))) {
         return 0;
     }
@@ -1202,7 +1164,7 @@ int trace_enter_unlink(struct trace_event_raw_sys_enter *ctx)
 SEC("tracepoint/syscalls/sys_exit_unlink")
 int trace_exit_unlink(struct trace_event_raw_sys_exit *ctx)
 {
-    struct syscall_event *e;
+    struct event *e;
     if (!(e = read_syscall_args(ctx))) {
         return 0;
     }
@@ -1221,7 +1183,7 @@ int trace_enter_rmdir(struct trace_event_raw_sys_enter *ctx)
 SEC("tracepoint/syscalls/sys_exit_rmdir")
 int trace_exit_rmdir(struct trace_event_raw_sys_exit *ctx)
 {
-    struct syscall_event *e;
+    struct event *e;
     if (!(e = read_syscall_args(ctx))) {
         return 0;
     }
@@ -1240,7 +1202,7 @@ int trace_enter_getdents(struct trace_event_raw_sys_enter *ctx)
 SEC("tracepoint/syscalls/sys_exit_getdents")
 int trace_exit_getdents(struct trace_event_raw_sys_exit *ctx)
 {
-    struct syscall_event *e;
+    struct event *e;
     if (!(e = read_syscall_args(ctx))) {
         return 0;
     }
@@ -1261,7 +1223,7 @@ int trace_enter_link(struct trace_event_raw_sys_enter *ctx)
 SEC("tracepoint/syscalls/sys_exit_link")
 int trace_exit_link(struct trace_event_raw_sys_exit *ctx)
 {
-    struct syscall_event *e;
+    struct event *e;
     if (!(e = read_syscall_args(ctx))) {
         return 0;
     }
@@ -1281,7 +1243,7 @@ int trace_enter_symlink(struct trace_event_raw_sys_enter *ctx)
 SEC("tracepoint/syscalls/sys_exit_symlink")
 int trace_exit_symlink(struct trace_event_raw_sys_exit *ctx)
 {
-    struct syscall_event *e;
+    struct event *e;
     if (!(e = read_syscall_args(ctx))) {
         return 0;
     }
@@ -1301,7 +1263,7 @@ int trace_enter_getxattr(struct trace_event_raw_sys_enter *ctx)
 SEC("tracepoint/syscalls/sys_exit_getxattr")
 int trace_exit_getxattr(struct trace_event_raw_sys_exit *ctx)
 {
-    struct syscall_event *e;
+    struct event *e;
     if (!(e = read_syscall_args(ctx))) {
         return 0;
     }
@@ -1325,7 +1287,7 @@ int trace_enter_setxattr(struct trace_event_raw_sys_enter *ctx)
 SEC("tracepoint/syscalls/sys_exit_setxattr")
 int trace_exit_setxattr(struct trace_event_raw_sys_exit *ctx)
 {
-    struct syscall_event *e;
+    struct event *e;
     if (!(e = read_syscall_args(ctx))) {
         return 0;
     }
@@ -1349,7 +1311,7 @@ int trace_enter_execve(struct trace_event_raw_sys_enter *ctx)
 SEC("tracepoint/syscalls/sys_exit_execve")
 int trace_exit_execve(struct trace_event_raw_sys_exit *ctx)
 {
-    struct syscall_event *e;
+    struct event *e;
     if (!(e = read_syscall_args(ctx))) {
         return 0;
     }
@@ -1403,7 +1365,7 @@ int trace_enter_exit(struct trace_event_raw_sys_enter *ctx)
         return 0;
     }
 
-    struct syscall_event *e;
+    struct event *e;
     if (!(e = read_main_args())) {
         return 0;
     }
@@ -1425,7 +1387,7 @@ int trace_enter_exit(struct trace_event_raw_sys_enter *ctx)
 SEC("tracepoint/syscalls/sys_enter_exit_group")
 int trace_enter_exit_group(struct trace_event_raw_sys_enter *ctx)
 {
-    struct syscall_event *e;
+    struct event *e;
     if (!(e = read_main_args())) {
         return 0;
     }
