@@ -218,7 +218,6 @@ int BPF_KRETPROBE(handle_evm_calc_hmac_or_hash_ret)
 	}
 
 	int ret = (int) PT_REGS_RC(ctx);
-    bpf_printk("EVM HMAC CALC RET (%d)\n", ret);
 	if (ret < 0) {
 		goto CLEANUP;
 	}
