@@ -279,7 +279,7 @@ class TraceTranslator:
             self.mediator_state.do_mkdir(abspath, folder, uid, gid, perms, FileHash(bytes(), fake_meta_hash))
 
     def chmod(self, pathname: str, mode: int, pid: int,
-              perms: Optional[int], metaHash: bytes, retval: int):
+              perms: Optional[int], metaHash: Optional[bytes], retval: int):
 
         # append model trace
         abspath = self.mediator_state.normalize(pathname, pid)
@@ -300,10 +300,11 @@ class TraceTranslator:
         # update mediator state
         if retval >= 0:
             perms = assert_is_not_none(perms)
+            metaHash = assert_is_not_none(metaHash)
             self.mediator_state.do_chmod(file, perms, metaHash)
 
     def fchmod(self, fd: int, mode: int, pid: int,
-               perms: Optional[int], metaHash: bytes, retval: int):
+               perms: Optional[int], metaHash: Optional[bytes], retval: int):
         
         file = self.mediator_state.get_ino_of_fd(ProcFD(pid, fd))
         filestat = self.mediator_state.do_stat(file)
@@ -322,10 +323,11 @@ class TraceTranslator:
         # update mediator state
         if retval >= 0:
             perms = assert_is_not_none(perms)
+            metaHash = assert_is_not_none(metaHash)
             self.mediator_state.do_chmod(file, perms, metaHash)
 
     def chown(self, pathname: str, owner: int, group: int, pid: int,
-              perms: Optional[int], metaHash: bytes, retval: int):
+              perms: Optional[int], metaHash: Optional[bytes], retval: int):
 
         # append model trace
         abspath = self.mediator_state.normalize(pathname, pid)
@@ -347,11 +349,12 @@ class TraceTranslator:
         # update mediator state
         if retval >= 0:
             perms = assert_is_not_none(perms)
+            metaHash = assert_is_not_none(metaHash)
             self.mediator_state.do_chown(file, owner, group, metaHash)
             self.mediator_state.do_chmod(file, perms, metaHash)
 
     def fchown(self, fd: int, owner: int, group: int, pid: int,
-               perms: Optional[int], metaHash: bytes, retval: int):
+               perms: Optional[int], metaHash: Optional[bytes], retval: int):
     
 
         # append model trace
@@ -372,6 +375,7 @@ class TraceTranslator:
         # update mediator state
         if retval >= 0:
             perms = assert_is_not_none(perms)
+            metaHash = assert_is_not_none(metaHash)
             self.mediator_state.do_chown(file, owner, group, metaHash)
             self.mediator_state.do_chmod(file, perms, metaHash)
 
