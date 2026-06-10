@@ -62,44 +62,20 @@ keyctl pipe `keyctl search @u encrypted evm-key` > /etc/keys/evm-user.blob      
 
 4) настроить `dracut`
 ```bash
-vim /etc/dracut.conf.d/imaevm.conf  # имя файла может быть любым, но должно кончаться на .conf
-```
-вписать содержимое файла:
-```bash
-add_dracutmodules+=" masterkey integrity "
-```
-сохранить  
-дальше:
-```bash
+# имя файла может быть любым, но должно кончаться на .conf
+echo 'add_dracutmodules+=" masterkey integrity "' > /etc/dracut.conf.d/imaevm.conf
 mkdir -p /etc/sysconfig
-vim /etc/sysconfig/masterkey
+
+# MULTIKERNELMODE="NO"
+# MASTERKEYTYPE="user"
+# MASTERKEY="/etc/keys/kmk-${MASTERKEYTYPE}.blob"
+echo -e 'MULTIKERNELMODE="NO"\nMASTERKEYTYPE="user"\nMASTERKEY="/etc/keys/kmk-${MASTERKEYTYPE}.blob"' > /etc/sysconfig/masterkey
+# EVMKEY="/etc/keys/evm-user.blob"
+echo 'EVMKEY="/etc/keys/evm-user.blob"' > /etc/sysconfig/evm
+# appraise fowner=2000
+# appraise fowner=2001
+echo -e 'appraise fowner=2000\nappraise fowner=2001' > /etc/sysconfig/ima-policy
 ```
-содержимое файла:
-```bash
-MULTIKERNELMODE="NO"
-MASTERKEYTYPE="user"
-MASTERKEY="/etc/keys/kmk-${MASTERKEYTYPE}.blob"
-```
-сохранить  
-дальше:
-```bash
-vim /etc/sysconfig/evm
-```
-содержимое файла:
-```bash
-EVMKEY="/etc/keys/evm-user.blob"
-```
-сохранить  
-дальше:
-```bash
-vim /etc/sysconfig/ima-policy
-```
-содержимое файла:
-```
-appraise fowner=2000
-appraise fowner=2001
-```
-сохранить; это политика работы IMA/EVM, состоящая в том, что проверяются только файлы, чей владелец имеет `uid=2000` или `uid=2001`, причём она действует и внутри контейнеров
 
 5) перегенерировать `initramfs`
 ```bash
