@@ -39,11 +39,7 @@ def test_wrong_hash(t: LinuxTestSpec, access_mode):
     t.add_setup(f'chown {ima_user} {new_file_path}')
 
 
-    try:
-        with t.make_program_and_run(ima_user, ima_user, ima_evm_dir=ima_evm_dir, umask=0) as child:
-            # all should fail
-            child.open(new_file_path, flags, 0)
-    except AssertionError as e:
-        print("Caught {e}")
-        pass
+    with t.make_program_and_run(ima_user, ima_user, ima_evm_dir=ima_evm_dir, umask=0) as child:
+        # all should fail
+        child.open(new_file_path, flags, 0)
         

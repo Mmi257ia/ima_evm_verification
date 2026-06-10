@@ -38,10 +38,8 @@ def test_open_exists_methodic_3(t: LinuxTestSpec, access_mode):
     fake_ima_hex = '0x01' + ('00' * 20)
     t.add_setup(f"setfattr -n security.ima -v {fake_ima_hex} {new_file_path}")
     
-    try:
-        with t.make_program_and_run(ima_user, ima_user, ima_evm_dir=ima_evm_dir, umask=0) as child:
-            # all should fail
-            child.open(new_file_path, flags, 0)
-    except AssertionError:
-        pass
+    with t.make_program_and_run(ima_user, ima_user, ima_evm_dir=ima_evm_dir, umask=0) as child:
+        # all should fail
+        child.open(new_file_path, flags, 0)
+
         
