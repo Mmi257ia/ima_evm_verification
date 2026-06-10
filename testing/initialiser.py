@@ -102,13 +102,13 @@ class SnapshotBuilder:
         files_stat = [f'stat --format=%n,%d,%i,%u,%g,%f {" ".join(self._init_files)}'] if len(self._init_files) > 0 else []
         files_xattrs = [f'getfattr --absolute-names -m - -d -e hex {" ".join(self._init_files)}'] if len(self._init_files) > 0 else []
         files_acl = [f'getfacl -n -p -e {" ".join(self._init_files)}'] if len(self._init_files) > 0 else []
-        files_attrs = [f'lsattr {" ".join(self._init_files)}'] if len(self._init_files) > 0 else []
+        files_attrs = [f'( lsattr {" ".join(self._init_files)} 2>&1 || true )'] if len(self._init_files) > 0 else []
 
         self._init_dirs.sort() # sorting moves parent folder earlier in the list
         dirs_stat = [f'stat --format=%n,%d,%i,%u,%g,%f {" ".join(self._init_dirs)}'] if len(self._init_dirs) > 0 else []
         dirs_xattrs = [f'getfattr --absolute-names -m - -d -e hex {" ".join(self._init_dirs)}'] if len(self._init_dirs) > 0 else []
         dirs_acl = [f'getfacl -n -p -e {" ".join(self._init_dirs)}'] if len(self._init_dirs) > 0 else []
-        dirs_attrs = [f'lsattr -d {" ".join(self._init_dirs)}'] if len(self._init_dirs) > 0 else []
+        dirs_attrs = [f'( lsattr -d {" ".join(self._init_dirs)} 2>&1 || true )'] if len(self._init_dirs) > 0 else []
 
         return [root, *groups, *users, *dirs_stat, *dirs_xattrs, 'echo "<>"', 
                     *files_stat, *files_xattrs, 'echo "<>"',
@@ -165,10 +165,11 @@ class SnapshotBuilder:
         for path in self._init_dirs + self._init_files:
             snapshot.acl.append(self._parse_getfacl_output(trace))
         for path in self._init_dirs + self._init_files:
-            line = self._xreadline(trace)
-            flags, lpath = line.split(' ', 1)
-            if flags[4] == 'i':
-                snapshot.immutable.append(lpath)
+            is_immutable, name = self._parse_lsattr_line(self._xreadline(trace))
+            if name != path:
+                raise ValueError('Wrong lsattr line')
+            if is_immutable:
+                snapshot.immutable.append(path)
 
         for xattrs in snapshot.folders_xattrs + snapshot.files_xattrs:
             snapshot.hashes[xattrs.path] = self._extract_hashes(xattrs)
@@ -251,3 +252,13 @@ class SnapshotBuilder:
             if len(line) == 0:
                 return (path, acls)
             acls.append(line)
+    
+    def _parse_lsattr_line(self, line: str) -> tuple[bool, str]:
+        lsattr_error_string = 'lsattr: Permission denied While reading flags on '
+        if line.startswith(lsattr_error_string):
+            # assuming that lsattr's fail means that file's IMA/EVM hash is corrupted,
+            # then we assume that it is not immutable (since we can't break hash of
+            # an immutable file in out testing system)
+            return False, line.removeprefix(lsattr_error_string)
+        flags, lpath = line.split(' ', 1)
+        return flags[4] == 'i', lpath
