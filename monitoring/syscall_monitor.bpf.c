@@ -305,10 +305,6 @@ int BPF_KPROBE(handle___fput)
 	if (i == NULL) {
 		return 0;
 	}
-	umode_t mode = BPF_CORE_READ(i, i_mode);
-	if (!S_ISREG(mode)) {
-		return 0;
-	}
 	data.ino = BPF_CORE_READ(i, i_ino);
 	struct super_block *sb = BPF_CORE_READ(i, i_sb);
 	data.dev = BPF_CORE_READ(sb, s_dev);
