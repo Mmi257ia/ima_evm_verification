@@ -57,6 +57,8 @@ events
     end
 
     event openat_create extends openat_create
+      where
+        @grd31: O_DIRECTORY ∉ flags // директорию нельзя создавать при помощи openat
     end
 
     event openat_exists extends openat_exists // in case of absolute pathname you need to call open_create or open_exists
