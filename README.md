@@ -1,3 +1,36 @@
+# Ограничения модели
+
+1. Политика IMA/EVM распространяется на файлы, созданные пользователями с id=2000, 2001.
+
+2. Переключение режима в рантайме отсустствует, по умолчанию установлен режим ENFORCE.
+
+3. Директории и симлинки не имеют хэша, хэш есть только у файлов.
+
+4. @grd31: parent ∉ ImmutableFiles
+Данное условие в модели запрещает открытие файла (open_exists) из immutable директории, но в реальности файл открывать можно.
+
+```bash
+ima_user@debian:~$ cd dir1
+ima_user@debian:~/dir1$ touch file1
+ima_user@debian:~/dir1$ echo "llll" > file1
+ima_user@debian:~/dir1$ cd ..
+ima_user@debian:~$ sudo chattr +i ./dir1
+ima_user@debian:~$ lsattr -d dir1
+----i---------e------- dir1
+ima_user@debian:~$ cat ./dir1/file1 
+llll
+```
+
+5. @grd30: IMAMode = ENFORCE ⇒ O_WRONLY ∉ flags ∧ O_RDWR ∉ flags
+Данное условие в модели запрещает открывать файл за запись (open_exists) в режиме ENFORCE, но это не соответвтвует реальности.
+
+```bash
+ima_user@debian:~$ cd dir1/
+ima_user@debian:~/dir1$ vi ./file1 
+ima_user@debian:~/dir1$ 
+```
+
+
 # Заметки
 
 ## Настройка IMA/EVM
