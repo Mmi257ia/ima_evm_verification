@@ -67,6 +67,8 @@ class TraceTranslator:
         folder = self.mediator_state.get_ino(path)
         parent = self.mediator_state.get_ino(dirname(path))
         for name, value in xattrs.items():
+            if name in ('security.ima', 'security.evm'):
+                continue
             value_b = bytes.fromhex(value)
             self._model_trace.setxattr(path, name, value_b, len(value_b), 0, parent, folder, 0, 0, skip_coverage=True)
 

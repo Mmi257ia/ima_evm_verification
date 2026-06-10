@@ -63,6 +63,9 @@ class DataTranslator:
         self.rootInode = Inode(root_dev, root_ino)
         self.model_files[self.rootInode] = m.ROOT
 
+        self.model_strings['security.ima'] = m.IMA_STRING
+        self.model_strings['security.evm'] = m.EVM_STRING
+
 
 class EventsBuilder:
     def __init__(self, *, model_trace: ModelTraceConsumer, m: Machine,

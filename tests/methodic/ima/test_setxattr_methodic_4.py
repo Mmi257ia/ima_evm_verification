@@ -9,11 +9,6 @@ def test_setxattr_methodic_4(t: LinuxTestSpec):
     t.make_dir(f'/{ima_evm_dir}/dir', ima_user, ima_user, 0o755)
     t.make_file(f'/{ima_evm_dir}/dir/file', owner=ima_user, group=ima_user, mode=0o644)
     
-    try:
-        with t.make_program_and_run(ima_user, ima_user, ima_evm_dir=ima_evm_dir, umask=0) as child:
-            # should fail
-            value = b'ABC'
-            child.setxattr(f'/{ima_evm_dir}/dir/file', 'security.evm', value, len(value), 0)
-    except AssertionError as e:
-        print(f"Rightfully caught exception {e}")
-        pass
+    with t.make_program_and_run(ima_user, ima_user, ima_evm_dir=ima_evm_dir, umask=0) as child:
+        value = b'ABC'
+        child.setxattr(f'/{ima_evm_dir}/dir/file', 'security.evm', value, len(value), 0)
